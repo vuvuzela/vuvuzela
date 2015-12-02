@@ -20,7 +20,7 @@ Vuvuzela is the first system that provides strong metadata privacy while
 scaling to millions of users.  Previous systems that hide metadata using
 Tor (such as [Pond](https://pond.imperialviolet.org/)) are prone to traffic
 analysis attacks.  Systems that encrypt metadata using techniques like
-DC-nets and PIR don't scale past thousands of users.
+DC-nets and PIR don't scale beyond thousands of users.
 
 Vuvuzela uses efficient cryptography ([NaCl](http://nacl.cr.yp.to)) to hide as
 much metadata as possible and adds noise to metadata that can't be encrypted
