@@ -14,7 +14,9 @@ Vuvuzela is a messaging system that protects the privacy of message contents
 and message metadata.  Users communicating through Vuvuzela do not reveal who
 they are talking to, even in the presence of powerful nation-state adversaries.
 Our [SOSP 2015 paper](https://davidlazar.org/papers/vuvuzela.pdf) explains
-the system, its threat model, performance, limitations, and more.
+the system, its threat model, performance, limitations, and more.  Our
+[SOSP 2015 slides](https://davidlazar.org/slides/vuvuzela-sosp2015.pdf) give
+a more graphical overview of the system.
 
 Vuvuzela is the first system that provides strong metadata privacy while
 scaling to millions of users.  Previous systems that hide metadata using
