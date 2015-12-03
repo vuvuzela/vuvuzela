@@ -57,7 +57,7 @@ exploit.
 Follow these steps to run the Vuvuzela system locally using the provided
 sample configs.
 
-1. Install Vuvuzela (assuming `GOPATH=~/go`):
+1. Install Vuvuzela (assuming `GOPATH=~/go`, requires Go 1.4 or later):
 
         $ go get github.com/davidlazar/vuvuzela/...
 
