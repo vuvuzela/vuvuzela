@@ -66,14 +66,13 @@ func (pki *PKI) LastServer() string {
 }
 
 func (pki *PKI) Index(serverName string) int {
-	var i int
-	var s string
-	for i, s = range pki.ServerOrder {
+	for i, s := range pki.ServerOrder {
 		if s == serverName {
-			break
+			return i
 		}
 	}
-	return i
+	log.Fatalf("pki.Index: server %q not found", serverName)
+	return -1
 }
 
 func (pki *PKI) NextServer(serverName string) string {
