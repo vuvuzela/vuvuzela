@@ -117,3 +117,8 @@ for more information.
 
 This code is written by David Lazar with contributions from
 Jelle van den Hooff, Nickolai Zeldovich, and Matei Zaharia.
+
+
+## See also
+
+[Vuvuzela web client](https://github.com/jlmart88/vuvuzela-web-client)
