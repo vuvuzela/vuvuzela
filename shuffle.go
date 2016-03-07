@@ -10,7 +10,7 @@ type Shuffler []int
 func NewShuffler(rand io.Reader, n int) Shuffler {
 	p := make(Shuffler, n)
 	for i := range p {
-		p[i] = Intn(rand, i+1)
+		p[i] = intn(rand, i+1)
 	}
 	return p
 }
@@ -29,7 +29,7 @@ func (s Shuffler) Unshuffle(x [][]byte) {
 	}
 }
 
-func Intn(rand io.Reader, n int) int {
+func intn(rand io.Reader, n int) int {
 	max := ^uint32(0)
 	m := max % uint32(n)
 	r := make([]byte, 4)
