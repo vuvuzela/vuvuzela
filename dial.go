@@ -10,6 +10,7 @@ import (
 
 	. "github.com/davidlazar/vuvuzela/internal"
 	"github.com/davidlazar/vuvuzela/rand"
+	"github.com/davidlazar/vuvuzela/shuffle"
 	"github.com/davidlazar/vuvuzela/vrpc"
 )
 
@@ -165,7 +166,7 @@ func (srv *DialService) Close(Round uint32, _ *struct{}) error {
 	round.noiseWg.Wait()
 	round.incoming = append(round.incoming, round.noise...)
 
-	shuffler := NewShuffler(rand.Reader, len(round.incoming))
+	shuffler := shuffle.New(rand.Reader, len(round.incoming))
 	shuffler.Shuffle(round.incoming)
 
 	if !srv.LastServer {

@@ -1,4 +1,4 @@
-package vuvuzela
+package shuffle
 
 import (
 	"encoding/binary"
@@ -7,7 +7,7 @@ import (
 
 type Shuffler []int
 
-func NewShuffler(rand io.Reader, n int) Shuffler {
+func New(rand io.Reader, n int) Shuffler {
 	p := make(Shuffler, n)
 	for i := range p {
 		p[i] = intn(rand, i+1)

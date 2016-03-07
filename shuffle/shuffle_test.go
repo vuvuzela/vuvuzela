@@ -1,4 +1,4 @@
-package vuvuzela
+package shuffle
 
 import (
 	"testing"
@@ -13,7 +13,7 @@ func TestShuffle(t *testing.T) {
 		x[i] = []byte{byte(i)}
 	}
 
-	s := NewShuffler(rand.Reader, len(x))
+	s := New(rand.Reader, len(x))
 	s.Shuffle(x)
 
 	allSame := true

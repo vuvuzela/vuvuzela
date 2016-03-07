@@ -10,6 +10,7 @@ import (
 
 	. "github.com/davidlazar/vuvuzela/internal"
 	"github.com/davidlazar/vuvuzela/rand"
+	"github.com/davidlazar/vuvuzela/shuffle"
 	"github.com/davidlazar/vuvuzela/vrpc"
 )
 
@@ -227,7 +228,7 @@ func (srv *ConvoService) Close(Round uint32, _ *struct{}) error {
 		outgoing := append(round.incoming, round.noise...)
 		round.noise = nil
 
-		shuffler := NewShuffler(rand.Reader, len(outgoing))
+		shuffler := shuffle.New(rand.Reader, len(outgoing))
 		shuffler.Shuffle(outgoing)
 
 		if err := NewConvoRound(srv.Client, Round); err != nil {
