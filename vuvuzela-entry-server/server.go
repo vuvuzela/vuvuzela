@@ -279,7 +279,7 @@ func (srv *server) runDialRound(round uint32, requests []*dialReq) {
 
 			db := &DialBucket{
 				Round:  round,
-				Intros: result.Buckets[bi],
+				Intros: result.Buckets[bi-1],
 			}
 			c.Send(db)
 		}

@@ -41,7 +41,7 @@ func (d *Dialer) NextDialRequest(round uint32, buckets uint32) *DialRequest {
 		copy(ex.EncryptedIntro[:], ctxt)
 	default:
 		ex = &DialExchange{
-			Bucket: ^uint32(0),
+			Bucket: 0,
 		}
 		rand.Read(ex.EncryptedIntro[:])
 	}

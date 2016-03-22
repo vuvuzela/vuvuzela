@@ -83,7 +83,7 @@ func (srv *DialService) NewRound(Round uint32, _ *struct{}) error {
 	go func() {
 		// NOTE: unlike the convo protocol, the last server also adds noise
 		noiseTotal := 0
-		noiseCounts := make([]int, TotalDialBuckets)
+		noiseCounts := make([]int, TotalDialBuckets+1)
 		for b := range noiseCounts {
 			bmu := cappedFlooredLaplace(srv.LaplaceMu, srv.LaplaceB)
 			noiseCounts[b] = bmu
@@ -218,10 +218,13 @@ func (srv *DialService) Buckets(args *DialBucketsArgs, result *DialBucketsResult
 		if err := ex.Unmarshal(m); err != nil {
 			continue
 		}
-		if ex.Bucket >= uint32(len(buckets)) {
+		if ex.Bucket == 0 {
+			continue // dummy dead drop
+		}
+		if ex.Bucket-1 >= uint32(len(buckets)) {
 			continue
 		}
-		buckets[ex.Bucket] = append(buckets[ex.Bucket], ex.EncryptedIntro)
+		buckets[ex.Bucket-1] = append(buckets[ex.Bucket-1], ex.EncryptedIntro)
 	}
 
 	result.Buckets = buckets

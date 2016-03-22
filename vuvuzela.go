@@ -88,5 +88,5 @@ func BackwardNonce(round uint32) *[24]byte {
 }
 
 func KeyDialBucket(key *BoxKey, buckets uint32) uint32 {
-	return binary.BigEndian.Uint32(key[28:32]) % buckets
+	return binary.BigEndian.Uint32(key[28:32])%buckets + 1
 }
