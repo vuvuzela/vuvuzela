@@ -8,7 +8,7 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/jroimartin/gocui"
+	"github.com/davidlazar/gocui"
 
 	. "github.com/davidlazar/vuvuzela"
 	. "github.com/davidlazar/vuvuzela/internal"
