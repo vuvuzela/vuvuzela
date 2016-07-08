@@ -8,8 +8,8 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"golang.org/x/crypto/nacl/box"
 
-	. "github.com/davidlazar/vuvuzela/internal"
 	"github.com/davidlazar/vuvuzela/vrpc"
+	"vuvuzela.io/concurrency"
 	"vuvuzela.io/crypto/rand"
 	"vuvuzela.io/crypto/shuffle"
 )
@@ -245,7 +245,7 @@ func (srv *ConvoService) Close(Round uint32, _ *struct{}) error {
 		round.replies = replies[:round.numIncoming]
 	} else {
 		exchanges := make([]*ConvoExchange, len(round.incoming))
-		ParallelFor(len(round.incoming), func(p *P) {
+		concurrency.ParallelFor(len(round.incoming), func(p *concurrency.P) {
 			for i, ok := p.Next(); ok; i, ok = p.Next() {
 				exchanges[i] = new(ConvoExchange)
 				if err := exchanges[i].Unmarshal(round.incoming[i]); err != nil {
@@ -269,7 +269,7 @@ func (srv *ConvoService) Close(Round uint32, _ *struct{}) error {
 		}
 
 		round.replies = make([][]byte, len(round.incoming))
-		ParallelFor(len(exchanges), func(p *P) {
+		concurrency.ParallelFor(len(exchanges), func(p *concurrency.P) {
 			for i, ok := p.Next(); ok; i, ok = p.Next() {
 				ex := exchanges[i]
 				drop := deadDrops[ex.DeadDrop]
@@ -365,10 +365,10 @@ func RunConvoRound(client *vrpc.Client, round uint32, onions [][]byte) ([][]byte
 		return nil, fmt.Errorf("Open: %s", err)
 	}
 
-	spans := Spans(len(onions), 4000)
+	spans := concurrency.Spans(len(onions), 4000)
 	calls := make([]*vrpc.Call, len(spans))
 
-	ParallelFor(len(calls), func(p *P) {
+	concurrency.ParallelFor(len(calls), func(p *concurrency.P) {
 		for i, ok := p.Next(); ok; i, ok = p.Next() {
 			span := spans[i]
 			calls[i] = &vrpc.Call{
@@ -391,7 +391,7 @@ func RunConvoRound(client *vrpc.Client, round uint32, onions [][]byte) ([][]byte
 		return nil, fmt.Errorf("Close: %s", err)
 	}
 
-	ParallelFor(len(calls), func(p *P) {
+	concurrency.ParallelFor(len(calls), func(p *concurrency.P) {
 		for i, ok := p.Next(); ok; i, ok = p.Next() {
 			span := spans[i]
 			calls[i] = &vrpc.Call{
@@ -411,7 +411,7 @@ func RunConvoRound(client *vrpc.Client, round uint32, onions [][]byte) ([][]byte
 	}
 
 	replies := make([][]byte, len(onions))
-	ParallelFor(len(calls), func(p *P) {
+	concurrency.ParallelFor(len(calls), func(p *concurrency.P) {
 		for i, ok := p.Next(); ok; i, ok = p.Next() {
 			span := spans[i]
 			copy(replies[span.Start:span.Start+span.Count], calls[i].Reply.(*ConvoGetResult).Onions)

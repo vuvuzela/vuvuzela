@@ -8,8 +8,8 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"golang.org/x/crypto/nacl/box"
 
-	. "github.com/davidlazar/vuvuzela/internal"
 	"github.com/davidlazar/vuvuzela/vrpc"
+	"vuvuzela.io/concurrency"
 	"vuvuzela.io/crypto/rand"
 	"vuvuzela.io/crypto/shuffle"
 )
@@ -238,10 +238,10 @@ func NewDialRound(client *vrpc.Client, round uint32) error {
 }
 
 func RunDialRound(client *vrpc.Client, round uint32, onions [][]byte) error {
-	spans := Spans(len(onions), 4000)
+	spans := concurrency.Spans(len(onions), 4000)
 	calls := make([]*vrpc.Call, len(spans))
 
-	ParallelFor(len(calls), func(p *P) {
+	concurrency.ParallelFor(len(calls), func(p *concurrency.P) {
 		for i, ok := p.Next(); ok; i, ok = p.Next() {
 			span := spans[i]
 			calls[i] = &vrpc.Call{

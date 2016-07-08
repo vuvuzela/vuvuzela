@@ -14,6 +14,7 @@ import (
 	. "github.com/davidlazar/vuvuzela"
 	. "github.com/davidlazar/vuvuzela/internal"
 	"github.com/davidlazar/vuvuzela/vrpc"
+	"vuvuzela.io/concurrency"
 )
 
 type server struct {
@@ -69,7 +70,7 @@ func (srv *server) allConnections() []*connection {
 }
 
 func broadcast(conns []*connection, v interface{}) {
-	ParallelFor(len(conns), func(p *P) {
+	concurrency.ParallelFor(len(conns), func(p *concurrency.P) {
 		for i, ok := p.Next(); ok; i, ok = p.Next() {
 			conns[i].Send(v)
 		}
@@ -230,7 +231,7 @@ func (srv *server) runConvoRound(round uint32, requests []*convoReq) {
 
 	rlog.WithFields(log.Fields{"replies": len(replies)}).Info("Success")
 
-	ParallelFor(len(replies), func(p *P) {
+	concurrency.ParallelFor(len(replies), func(p *concurrency.P) {
 		for i, ok := p.Next(); ok; i, ok = p.Next() {
 			reply := &ConvoResponse{
 				Round: round,
@@ -272,7 +273,7 @@ func (srv *server) runDialRound(round uint32, requests []*dialReq) {
 	}
 	rlog.WithFields(log.Fields{"buckets": len(result.Buckets), "intros": intros}).Info("Buckets")
 
-	ParallelFor(len(conns), func(p *P) {
+	concurrency.ParallelFor(len(conns), func(p *concurrency.P) {
 		for i, ok := p.Next(); ok; i, ok = p.Next() {
 			c := conns[i]
 			bi := KeyDialBucket(c.publicKey, TotalDialBuckets)

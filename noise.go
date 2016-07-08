@@ -3,13 +3,13 @@ package vuvuzela
 import (
 	"encoding/binary"
 
-	. "github.com/davidlazar/vuvuzela/internal"
+	"vuvuzela.io/concurrency"
 	"vuvuzela.io/crypto/onionbox"
 	"vuvuzela.io/crypto/rand"
 )
 
 func FillWithFakeSingles(dest [][]byte, nonce *[24]byte, nextKeys []*[32]byte) {
-	ParallelFor(len(dest), func(p *P) {
+	concurrency.ParallelFor(len(dest), func(p *concurrency.P) {
 		for i, ok := p.Next(); ok; i, ok = p.Next() {
 			var exchange [SizeConvoExchange]byte
 			rand.Read(exchange[:])
@@ -20,7 +20,7 @@ func FillWithFakeSingles(dest [][]byte, nonce *[24]byte, nextKeys []*[32]byte) {
 }
 
 func FillWithFakeDoubles(dest [][]byte, nonce *[24]byte, nextKeys []*[32]byte) {
-	ParallelFor(len(dest)/2, func(p *P) {
+	concurrency.ParallelFor(len(dest)/2, func(p *concurrency.P) {
 		for i, ok := p.Next(); ok; i, ok = p.Next() {
 			var exchange1 [SizeConvoExchange]byte
 			var exchange2 [SizeConvoExchange]byte
@@ -45,7 +45,7 @@ func FillWithFakeIntroductions(dest [][]byte, noiseCounts []int, nonce *[24]byte
 		}
 	}
 
-	ParallelFor(len(dest), func(p *P) {
+	concurrency.ParallelFor(len(dest), func(p *concurrency.P) {
 		for i, ok := p.Next(); ok; i, ok = p.Next() {
 			var exchange [SizeDialExchange]byte
 			binary.BigEndian.PutUint32(exchange[0:4], uint32(buckets[i]))
