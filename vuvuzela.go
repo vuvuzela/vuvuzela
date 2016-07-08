@@ -7,7 +7,7 @@ import (
 
 	"golang.org/x/crypto/nacl/box"
 
-	"github.com/davidlazar/vuvuzela/onionbox"
+	"vuvuzela.io/crypto/onionbox"
 )
 
 type DeadDrop [16]byte

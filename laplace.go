@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"math"
 
-	"github.com/davidlazar/vuvuzela/rand"
+	"vuvuzela.io/crypto/rand"
 )
 
 func laplace(mu, b float64) float64 {

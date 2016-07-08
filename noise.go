@@ -4,8 +4,8 @@ import (
 	"encoding/binary"
 
 	. "github.com/davidlazar/vuvuzela/internal"
-	"github.com/davidlazar/vuvuzela/onionbox"
-	"github.com/davidlazar/vuvuzela/rand"
+	"vuvuzela.io/crypto/onionbox"
+	"vuvuzela.io/crypto/rand"
 )
 
 func FillWithFakeSingles(dest [][]byte, nonce *[24]byte, nextKeys []*[32]byte) {

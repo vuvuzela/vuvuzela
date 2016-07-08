@@ -9,9 +9,9 @@ import (
 	"golang.org/x/crypto/nacl/box"
 
 	. "github.com/davidlazar/vuvuzela/internal"
-	"github.com/davidlazar/vuvuzela/rand"
-	"github.com/davidlazar/vuvuzela/shuffle"
 	"github.com/davidlazar/vuvuzela/vrpc"
+	"vuvuzela.io/crypto/rand"
+	"vuvuzela.io/crypto/shuffle"
 )
 
 type DialService struct {

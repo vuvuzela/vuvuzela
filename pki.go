@@ -8,7 +8,7 @@ import (
 	"golang.org/x/crypto/nacl/box"
 
 	. "github.com/davidlazar/vuvuzela/internal"
-	"github.com/davidlazar/vuvuzela/onionbox"
+	"vuvuzela.io/crypto/onionbox"
 )
 
 type ServerInfo struct {
