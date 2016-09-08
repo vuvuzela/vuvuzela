@@ -20,8 +20,7 @@ type DialService struct {
 
 	Idle *sync.Mutex
 
-	LaplaceMu float64
-	LaplaceB  float64
+	Laplace rand.Laplace
 
 	PKI        *PKI
 	ServerName string
@@ -82,10 +81,10 @@ func (srv *DialService) NewRound(Round uint32, _ *struct{}) error {
 	round.noiseWg.Add(1)
 	go func() {
 		// NOTE: unlike the convo protocol, the last server also adds noise
-		noiseTotal := 0
-		noiseCounts := make([]int, TotalDialBuckets+1)
+		noiseTotal := uint32(0)
+		noiseCounts := make([]uint32, TotalDialBuckets+1)
 		for b := range noiseCounts {
-			bmu := cappedFlooredLaplace(srv.LaplaceMu, srv.LaplaceB)
+			bmu := srv.Laplace.Uint32()
 			noiseCounts[b] = bmu
 			noiseTotal += bmu
 		}

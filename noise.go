@@ -35,11 +35,11 @@ func FillWithFakeDoubles(dest [][]byte, nonce *[24]byte, nextKeys []*[32]byte) {
 	})
 }
 
-func FillWithFakeIntroductions(dest [][]byte, noiseCounts []int, nonce *[24]byte, nextKeys []*[32]byte) {
+func FillWithFakeIntroductions(dest [][]byte, noiseCounts []uint32, nonce *[24]byte, nextKeys []*[32]byte) {
 	buckets := make([]int, len(dest))
 	idx := 0
 	for b, count := range noiseCounts {
-		for i := 0; i < count; i++ {
+		for i := uint32(0); i < count; i++ {
 			buckets[idx] = b
 			idx++
 		}

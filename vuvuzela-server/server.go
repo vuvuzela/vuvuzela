@@ -18,6 +18,7 @@ import (
 	. "github.com/davidlazar/vuvuzela"
 	. "github.com/davidlazar/vuvuzela/internal"
 	"github.com/davidlazar/vuvuzela/vrpc"
+	vrand "vuvuzela.io/crypto/rand"
 )
 
 var doInit = flag.Bool("init", false, "create default config file")
@@ -99,8 +100,10 @@ func main() {
 	convoService := &ConvoService{
 		Idle: &idle,
 
-		LaplaceMu: conf.ConvoMu,
-		LaplaceB:  conf.ConvoB,
+		Laplace: vrand.Laplace{
+			Mu: conf.ConvoMu,
+			B:  conf.ConvoB,
+		},
 
 		PKI:        pki,
 		ServerName: conf.ServerName,
@@ -119,8 +122,10 @@ func main() {
 	dialService := &DialService{
 		Idle: &idle,
 
-		LaplaceMu: conf.DialMu,
-		LaplaceB:  conf.DialB,
+		Laplace: vrand.Laplace{
+			Mu: conf.ConvoMu,
+			B:  conf.ConvoB,
+		},
 
 		PKI:        pki,
 		ServerName: conf.ServerName,

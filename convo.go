@@ -20,8 +20,7 @@ type ConvoService struct {
 
 	Idle *sync.Mutex
 
-	LaplaceMu float64
-	LaplaceB  float64
+	Laplace rand.Laplace
 
 	PKI        *PKI
 	ServerName string
@@ -43,8 +42,8 @@ type ConvoRound struct {
 
 	replies [][]byte
 
-	numFakeSingles int
-	numFakeDoubles int
+	numFakeSingles uint32
+	numFakeDoubles uint32
 
 	noise   [][]byte
 	noiseWg sync.WaitGroup
@@ -102,8 +101,8 @@ func (srv *ConvoService) NewRound(Round uint32, _ *struct{}) error {
 	srv.rounds[Round] = round
 
 	if !srv.LastServer {
-		round.numFakeSingles = cappedFlooredLaplace(srv.LaplaceMu, srv.LaplaceB)
-		round.numFakeDoubles = cappedFlooredLaplace(srv.LaplaceMu, srv.LaplaceB)
+		round.numFakeSingles = srv.Laplace.Uint32()
+		round.numFakeDoubles = srv.Laplace.Uint32()
 		round.numFakeDoubles += round.numFakeDoubles % 2 // ensure numFakeDoubles is even
 		round.noise = make([][]byte, round.numFakeSingles+round.numFakeDoubles)
 
