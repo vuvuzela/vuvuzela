@@ -11,10 +11,10 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/gorilla/websocket"
 
-	. "github.com/davidlazar/vuvuzela"
-	. "github.com/davidlazar/vuvuzela/internal"
-	"github.com/davidlazar/vuvuzela/vrpc"
 	"vuvuzela.io/concurrency"
+	. "vuvuzela.io/vuvuzela"
+	. "vuvuzela.io/vuvuzela/internal"
+	"vuvuzela.io/vuvuzela/vrpc"
 )
 
 type server struct {

@@ -5,8 +5,8 @@ import (
 
 	"golang.org/x/crypto/nacl/box"
 
-	. "github.com/davidlazar/vuvuzela"
 	"vuvuzela.io/crypto/onionbox"
+	. "vuvuzela.io/vuvuzela"
 )
 
 type Dialer struct {

@@ -10,8 +10,8 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/davidlazar/gocui"
 
-	. "github.com/davidlazar/vuvuzela"
-	. "github.com/davidlazar/vuvuzela/internal"
+	. "vuvuzela.io/vuvuzela"
+	. "vuvuzela.io/vuvuzela/internal"
 )
 
 type GuiClient struct {

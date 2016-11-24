@@ -8,10 +8,10 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"golang.org/x/crypto/nacl/box"
 
-	"github.com/davidlazar/vuvuzela/vrpc"
 	"vuvuzela.io/concurrency"
 	"vuvuzela.io/crypto/rand"
 	"vuvuzela.io/crypto/shuffle"
+	"vuvuzela.io/vuvuzela/vrpc"
 )
 
 type ConvoService struct {

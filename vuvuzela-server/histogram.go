@@ -6,7 +6,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"gopkg.in/gizak/termui.v1"
 
-	"github.com/davidlazar/vuvuzela"
+	"vuvuzela.io/vuvuzela"
 )
 
 type Histogram struct {

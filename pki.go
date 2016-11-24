@@ -7,8 +7,8 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"golang.org/x/crypto/nacl/box"
 
-	. "github.com/davidlazar/vuvuzela/internal"
 	"vuvuzela.io/crypto/onionbox"
+	. "vuvuzela.io/vuvuzela/internal"
 )
 
 type ServerInfo struct {

@@ -15,10 +15,10 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 
-	. "github.com/davidlazar/vuvuzela"
-	. "github.com/davidlazar/vuvuzela/internal"
-	"github.com/davidlazar/vuvuzela/vrpc"
 	vrand "vuvuzela.io/crypto/rand"
+	. "vuvuzela.io/vuvuzela"
+	. "vuvuzela.io/vuvuzela/internal"
+	"vuvuzela.io/vuvuzela/vrpc"
 )
 
 var doInit = flag.Bool("init", false, "create default config file")

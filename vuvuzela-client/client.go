@@ -8,7 +8,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/gorilla/websocket"
 
-	. "github.com/davidlazar/vuvuzela"
+	. "vuvuzela.io/vuvuzela"
 )
 
 type Client struct {

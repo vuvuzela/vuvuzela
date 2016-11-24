@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/davidlazar/vuvuzela"
+	. "vuvuzela.io/vuvuzela"
 )
 
 func TestSoloConversation(t *testing.T) {

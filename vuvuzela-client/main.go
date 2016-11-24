@@ -8,8 +8,8 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 
-	. "github.com/davidlazar/vuvuzela"
-	. "github.com/davidlazar/vuvuzela/internal"
+	. "vuvuzela.io/vuvuzela"
+	. "vuvuzela.io/vuvuzela/internal"
 )
 
 var doInit = flag.Bool("init", false, "create default config file")
