@@ -25,20 +25,11 @@ type server struct {
 	convoRound    uint32
 	convoRequests []*convoReq
 
-	dialMu       sync.Mutex
-	dialRound    uint32
-	dialRequests []*dialReq
-
 	firstServer *vrpc.Client
 	lastServer  *vrpc.Client
 }
 
 type convoReq struct {
-	conn  *connection
-	onion []byte
-}
-
-type dialReq struct {
 	conn  *connection
 	onion []byte
 }
@@ -127,8 +118,6 @@ func (c *connection) handleRequest(v interface{}) {
 	switch v := v.(type) {
 	case *ConvoRequest:
 		c.handleConvoRequest(v)
-	case *DialRequest:
-		c.handleDialRequest(v)
 	}
 }
 
@@ -150,24 +139,6 @@ func (c *connection) handleConvoRequest(r *ConvoRequest) {
 	srv.convoMu.Unlock()
 }
 
-func (c *connection) handleDialRequest(r *DialRequest) {
-	srv := c.srv
-	srv.dialMu.Lock()
-	currRound := srv.dialRound
-	if r.Round != currRound {
-		srv.dialMu.Unlock()
-		err := fmt.Sprintf("wrong round (currently %d)", currRound)
-		go c.Send(&DialError{Round: r.Round, Err: err})
-		return
-	}
-	rr := &dialReq{
-		conn:  c,
-		onion: r.Onion,
-	}
-	srv.dialRequests = append(srv.dialRequests, rr)
-	srv.dialMu.Unlock()
-}
-
 func (srv *server) convoRoundLoop() {
 	for {
 		if err := NewConvoRound(srv.firstServer, srv.convoRound); err != nil {
@@ -186,28 +157,6 @@ func (srv *server) convoRoundLoop() {
 		srv.convoRound += 1
 		srv.convoRequests = make([]*convoReq, 0, len(srv.convoRequests))
 		srv.convoMu.Unlock()
-	}
-}
-
-func (srv *server) dialRoundLoop() {
-	for {
-		time.Sleep(DialWait)
-		if err := NewDialRound(srv.firstServer, srv.dialRound); err != nil {
-			log.WithFields(log.Fields{"service": "dial", "round": srv.dialRound, "call": "NewDialRound"}).Error(err)
-			time.Sleep(10 * time.Second)
-			continue
-		}
-		log.WithFields(log.Fields{"service": "dial", "round": srv.dialRound}).Info("Broadcast")
-
-		broadcast(srv.allConnections(), &AnnounceDialRound{srv.dialRound, TotalDialBuckets})
-		time.Sleep(*receiveWait)
-
-		srv.dialMu.Lock()
-		go srv.runDialRound(srv.dialRound, srv.dialRequests)
-
-		srv.dialRound += 1
-		srv.dialRequests = make([]*dialReq, 0, len(srv.dialRequests))
-		srv.dialMu.Unlock()
 	}
 }
 
@@ -238,51 +187,6 @@ func (srv *server) runConvoRound(round uint32, requests []*convoReq) {
 				Onion: replies[i],
 			}
 			conns[i].Send(reply)
-		}
-	})
-}
-
-func (srv *server) runDialRound(round uint32, requests []*dialReq) {
-	conns := make([]*connection, len(requests))
-	onions := make([][]byte, len(requests))
-	for i, r := range requests {
-		conns[i] = r.conn
-		onions[i] = r.onion
-	}
-
-	rlog := log.WithFields(log.Fields{"service": "dial", "round": round})
-	rlog.WithFields(log.Fields{"call": "RunDialRound", "onions": len(onions)}).Info()
-
-	if err := RunDialRound(srv.firstServer, round, onions); err != nil {
-		rlog.WithFields(log.Fields{"call": "RunDialRound"}).Error(err)
-		broadcast(conns, &DialError{Round: round, Err: "server error"})
-		return
-	}
-
-	args := &DialBucketsArgs{Round: round}
-	result := new(DialBucketsResult)
-	if err := srv.lastServer.Call("DialService.Buckets", args, result); err != nil {
-		rlog.WithFields(log.Fields{"call": "Buckets"}).Error(err)
-		broadcast(conns, &DialError{Round: round, Err: "server error"})
-		return
-	}
-
-	intros := 0
-	for _, b := range result.Buckets {
-		intros += len(b)
-	}
-	rlog.WithFields(log.Fields{"buckets": len(result.Buckets), "intros": intros}).Info("Buckets")
-
-	concurrency.ParallelFor(len(conns), func(p *concurrency.P) {
-		for i, ok := p.Next(); ok; i, ok = p.Next() {
-			c := conns[i]
-			bi := KeyDialBucket(c.publicKey, TotalDialBuckets)
-
-			db := &DialBucket{
-				Round:  round,
-				Intros: result.Buckets[bi-1],
-			}
-			c.Send(db)
 		}
 	})
 }
@@ -345,12 +249,9 @@ func main() {
 		connections:   make(map[*connection]bool),
 		convoRound:    0,
 		convoRequests: make([]*convoReq, 0, 10000),
-		dialRound:     0,
-		dialRequests:  make([]*dialReq, 0, 10000),
 	}
 
 	go srv.convoRoundLoop()
-	go srv.dialRoundLoop()
 
 	http.HandleFunc("/ws", srv.wsHandler)
 

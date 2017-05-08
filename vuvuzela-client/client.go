@@ -21,17 +21,11 @@ type Client struct {
 
 	roundHandlers map[uint32]ConvoHandler
 	convoHandler  ConvoHandler
-	dialHandler   DialHandler
 }
 
 type ConvoHandler interface {
 	NextConvoRequest(round uint32) *ConvoRequest
 	HandleConvoResponse(response *ConvoResponse)
-}
-
-type DialHandler interface {
-	NextDialRequest(round uint32, buckets uint32) *DialRequest
-	HandleDialBucket(db *DialBucket)
 }
 
 func NewClient(entryServer string, publicKey *BoxKey) *Client {
@@ -50,19 +44,10 @@ func (c *Client) SetConvoHandler(convo ConvoHandler) {
 	c.Unlock()
 }
 
-func (c *Client) SetDialHandler(dialer DialHandler) {
-	c.Lock()
-	c.dialHandler = dialer
-	c.Unlock()
-}
-
 func (c *Client) Connect() error {
 	// TODO check if already connected
 	if c.convoHandler == nil {
 		return fmt.Errorf("no convo handler")
-	}
-	if c.dialHandler == nil {
-		return fmt.Errorf("no dial handler")
 	}
 
 	wsaddr := fmt.Sprintf("%s/ws?publickey=%s", c.EntryServer, c.MyPublicKey.String())
@@ -126,12 +111,8 @@ func (c *Client) handleResponse(v interface{}) {
 		log.Printf("bad request error: %s", v.Error())
 	case *AnnounceConvoRound:
 		c.Send(c.nextConvoRequest(v.Round))
-	case *AnnounceDialRound:
-		c.Send(c.dialHandler.NextDialRequest(v.Round, v.Buckets))
 	case *ConvoResponse:
 		c.deliverConvoResponse(v)
-	case *DialBucket:
-		c.dialHandler.HandleDialBucket(v)
 	}
 }
 

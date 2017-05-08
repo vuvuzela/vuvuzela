@@ -35,9 +35,6 @@ type Conf struct {
 
 	ConvoMu float64
 	ConvoB  float64
-
-	DialMu float64
-	DialB  float64
 }
 
 func WriteDefaultConf(path string) {
@@ -119,26 +116,6 @@ func main() {
 		go histogram.run(convoService.AccessCounts)
 	}
 
-	dialService := &DialService{
-		Idle: &idle,
-
-		Laplace: vrand.Laplace{
-			Mu: conf.ConvoMu,
-			B:  conf.ConvoB,
-		},
-
-		PKI:        pki,
-		ServerName: conf.ServerName,
-		PrivateKey: conf.PrivateKey,
-
-		Client:     client,
-		LastServer: client == nil,
-	}
-	InitDialService(dialService)
-
-	if err := rpc.Register(dialService); err != nil {
-		log.Fatalf("rpc.Register: %s", err)
-	}
 	if err := rpc.Register(convoService); err != nil {
 		log.Fatalf("rpc.Register: %s", err)
 	}

@@ -12,16 +12,12 @@ type MsgType uint8
 const (
 	// from client to server
 	MsgConvoRequest MsgType = iota
-	MsgDialRequest
 
 	// from server to client
 	MsgBadRequestError
 	MsgConvoError
 	MsgConvoResponse
-	MsgDialError
-	MsgDialBucket
 	MsgAnnounceConvoRound
-	MsgAnnounceDialRound
 )
 
 type Envelope struct {
@@ -34,20 +30,14 @@ func (e *Envelope) Open() (interface{}, error) {
 	switch e.Type {
 	case MsgConvoRequest:
 		v = new(ConvoRequest)
-	case MsgDialRequest:
-		v = new(DialRequest)
 	case MsgBadRequestError:
 		v = new(BadRequestError)
 	case MsgConvoError:
 		v = new(ConvoError)
 	case MsgConvoResponse:
 		v = new(ConvoResponse)
-	case MsgDialBucket:
-		v = new(DialBucket)
 	case MsgAnnounceConvoRound:
 		v = new(AnnounceConvoRound)
-	case MsgAnnounceDialRound:
-		v = new(AnnounceDialRound)
 	default:
 		return nil, fmt.Errorf("unknown message type: %d", e.Type)
 	}
@@ -62,22 +52,14 @@ func Envelop(v interface{}) (*Envelope, error) {
 	switch v.(type) {
 	case *ConvoRequest:
 		t = MsgConvoRequest
-	case *DialRequest:
-		t = MsgDialRequest
 	case *BadRequestError:
 		t = MsgBadRequestError
 	case *ConvoError:
 		t = MsgConvoError
 	case *ConvoResponse:
 		t = MsgConvoResponse
-	case *DialError:
-		t = MsgDialError
-	case *DialBucket:
-		t = MsgDialBucket
 	case *AnnounceConvoRound:
 		t = MsgAnnounceConvoRound
-	case *AnnounceDialRound:
-		t = MsgAnnounceDialRound
 	default:
 		return nil, fmt.Errorf("unsupported message type: %T", v)
 	}
@@ -92,11 +74,6 @@ func Envelop(v interface{}) (*Envelope, error) {
 }
 
 type ConvoRequest struct {
-	Round uint32
-	Onion []byte
-}
-
-type DialRequest struct {
 	Round uint32
 	Onion []byte
 }
@@ -123,25 +100,6 @@ type ConvoResponse struct {
 	Onion []byte
 }
 
-type DialError struct {
-	Round uint32
-	Err   string
-}
-
-func (e *DialError) Error() string {
-	return fmt.Sprintf("round d%d: %s", e.Round, e.Err)
-}
-
-type DialBucket struct {
-	Round  uint32
-	Intros [][SizeEncryptedIntro]byte
-}
-
 type AnnounceConvoRound struct {
 	Round uint32
-}
-
-type AnnounceDialRound struct {
-	Round   uint32
-	Buckets uint32
 }

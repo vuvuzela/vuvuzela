@@ -1,8 +1,6 @@
 package vuvuzela
 
 import (
-	"encoding/binary"
-
 	"vuvuzela.io/concurrency"
 	"vuvuzela.io/crypto/onionbox"
 	"vuvuzela.io/crypto/rand"
@@ -31,27 +29,6 @@ func FillWithFakeDoubles(dest [][]byte, nonce *[24]byte, nextKeys []*[32]byte) {
 			onion2, _ := onionbox.Seal(exchange2[:], nonce, nextKeys)
 			dest[i*2] = onion1
 			dest[i*2+1] = onion2
-		}
-	})
-}
-
-func FillWithFakeIntroductions(dest [][]byte, noiseCounts []uint32, nonce *[24]byte, nextKeys []*[32]byte) {
-	buckets := make([]int, len(dest))
-	idx := 0
-	for b, count := range noiseCounts {
-		for i := uint32(0); i < count; i++ {
-			buckets[idx] = b
-			idx++
-		}
-	}
-
-	concurrency.ParallelFor(len(dest), func(p *concurrency.P) {
-		for i, ok := p.Next(); ok; i, ok = p.Next() {
-			var exchange [SizeDialExchange]byte
-			binary.BigEndian.PutUint32(exchange[0:4], uint32(buckets[i]))
-			rand.Read(exchange[4:])
-			onion, _ := onionbox.Seal(exchange[:], nonce, nextKeys)
-			dest[i] = onion
 		}
 	})
 }

@@ -27,7 +27,6 @@ type GuiClient struct {
 
 	selectedConvo *Conversation
 	conversations map[string]*Conversation
-	dialer        *Dialer
 }
 
 func (gc *GuiClient) switchConversation(peer string) {
@@ -74,15 +73,6 @@ func (gc *GuiClient) handleLine(line string) error {
 	case strings.HasPrefix(line, "/talk "):
 		peer := line[6:]
 		gc.switchConversation(peer)
-	case strings.HasPrefix(line, "/dial "):
-		peer := line[6:]
-		pk, ok := gc.pki.People[peer]
-		if !ok {
-			gc.Warnf("Unknown user: %q (see %s)\n", peer, *pkiPath)
-			return nil
-		}
-		gc.Warnf("Dialing user: %s\n", peer)
-		gc.dialer.QueueRequest(pk)
 	default:
 		msg := strings.TrimSpace(line)
 		gc.selectedConvo.QueueTextMessage([]byte(msg))
@@ -211,7 +201,6 @@ func quit(g *gocui.Gui, v *gocui.View) error {
 func (gc *GuiClient) Connect() error {
 	if gc.client == nil {
 		gc.client = NewClient(gc.pki.EntryServer, gc.myPublicKey)
-		gc.client.SetDialHandler(gc.dialer)
 	}
 	gc.activateConvo(gc.selectedConvo)
 	return gc.client.Connect()
@@ -238,14 +227,6 @@ func (gc *GuiClient) Run() {
 
 	gc.conversations = make(map[string]*Conversation)
 	gc.switchConversation(gc.myName)
-
-	gc.dialer = &Dialer{
-		gui:          gc,
-		pki:          gc.pki,
-		myPublicKey:  gc.myPublicKey,
-		myPrivateKey: gc.myPrivateKey,
-	}
-	gc.dialer.Init()
 
 	go func() {
 		time.Sleep(500 * time.Millisecond)
