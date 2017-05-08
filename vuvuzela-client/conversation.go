@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
@@ -12,7 +11,7 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-	"golang.org/x/crypto/nacl/box"
+	"golang.org/x/crypto/nacl/secretbox"
 
 	"vuvuzela.io/crypto/onionbox"
 	. "vuvuzela.io/vuvuzela"
@@ -21,12 +20,12 @@ import (
 type Conversation struct {
 	sync.RWMutex
 
-	pki           *PKI
-	peerName      string
-	peerPublicKey *BoxKey
-	myPublicKey   *BoxKey
-	myPrivateKey  *BoxKey
-	gui           *GuiClient
+	pki          *PKI
+	myUsername   string
+	peerUsername string
+	secretKey    *[32]byte
+
+	gui *GuiClient
 
 	outQueue      chan []byte
 	pendingRounds map[uint32]*pendingRound
@@ -115,7 +114,7 @@ func (c *Conversation) NextConvoRequest(round uint32) *ConvoRequest {
 	msgdata := msg.Marshal()
 
 	var encmsg [SizeEncryptedMessage]byte
-	ctxt := c.Seal(msgdata[:], round, c.myRole())
+	ctxt := c.Seal(msgdata[:], round)
 	copy(encmsg[:], ctxt)
 
 	exchange := &ConvoExchange{
@@ -169,7 +168,7 @@ func (c *Conversation) HandleConvoResponse(r *ConvoResponse) {
 		return
 	}
 
-	msgdata, ok := c.Open(encmsg, r.Round, c.theirRole())
+	msgdata, ok := c.Open(encmsg, r.Round)
 	if !ok {
 		rlog.Error("decrypting peer message failed")
 		return
@@ -186,7 +185,7 @@ func (c *Conversation) HandleConvoResponse(r *ConvoResponse) {
 	switch m := msg.Body.(type) {
 	case *TextMessage:
 		s := strings.TrimRight(string(m.Message), "\x00")
-		c.gui.Printf("<%s> %s\n", c.peerName, s)
+		c.gui.Printf("<%s> %s\n", c.peerUsername, s)
 	case *TimestampMessage:
 		latency := time.Now().Sub(m.Timestamp)
 		c.Lock()
@@ -213,55 +212,33 @@ func (c *Conversation) Status() *Status {
 }
 
 func (c *Conversation) Solo() bool {
-	return bytes.Compare(c.myPublicKey[:], c.peerPublicKey[:]) == 0
+	return c.peerUsername == c.myUsername
 }
 
-// Roles ensure that messages to the peer and messages from
-// the peer have distinct nonces.
-func (c *Conversation) myRole() byte {
-	if bytes.Compare(c.myPublicKey[:], c.peerPublicKey[:]) < 0 {
-		return 0
-	} else {
-		return 1
-	}
-}
-
-func (c *Conversation) theirRole() byte {
-	if bytes.Compare(c.peerPublicKey[:], c.myPublicKey[:]) < 0 {
-		return 0
-	} else {
-		return 1
-	}
-}
-
-func (c *Conversation) Seal(message []byte, round uint32, role byte) []byte {
+func (c *Conversation) Seal(message []byte, round uint32) []byte {
 	var nonce [24]byte
 	binary.BigEndian.PutUint32(nonce[:], round)
-	nonce[23] = role
+	nameHash := sha256.Sum256([]byte(c.peerUsername))
+	copy(nonce[4:], nameHash[:16])
 
-	ctxt := box.Seal(nil, message, &nonce, c.peerPublicKey.Key(), c.myPrivateKey.Key())
+	ctxt := secretbox.Seal(nil, message, &nonce, c.secretKey)
 	return ctxt
 }
 
-func (c *Conversation) Open(ctxt []byte, round uint32, role byte) ([]byte, bool) {
+func (c *Conversation) Open(ctxt []byte, round uint32) ([]byte, bool) {
 	var nonce [24]byte
 	binary.BigEndian.PutUint32(nonce[:], round)
-	nonce[23] = role
+	nameHash := sha256.Sum256([]byte(c.myUsername))
+	copy(nonce[4:], nameHash[:16])
 
-	return box.Open(nil, ctxt, &nonce, c.peerPublicKey.Key(), c.myPrivateKey.Key())
+	return secretbox.Open(nil, ctxt, &nonce, c.secretKey)
 }
 
 func (c *Conversation) deadDrop(round uint32) (id DeadDrop) {
-	if c.Solo() {
-		rand.Read(id[:])
-	} else {
-		var sharedKey [32]byte
-		box.Precompute(&sharedKey, c.peerPublicKey.Key(), c.myPrivateKey.Key())
-
-		h := hmac.New(sha256.New, sharedKey[:])
-		binary.Write(h, binary.BigEndian, round)
-		r := h.Sum(nil)
-		copy(id[:], r)
-	}
+	h := hmac.New(sha256.New, c.secretKey[:])
+	h.Write([]byte("DeadDrop"))
+	binary.Write(h, binary.BigEndian, round)
+	r := h.Sum(nil)
+	copy(id[:], r)
 	return
 }

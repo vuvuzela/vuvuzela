@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/rand"
 	"encoding/json"
 	"flag"
 	"io/ioutil"
@@ -17,21 +16,11 @@ var confPath = flag.String("conf", "confs/client.conf", "config file")
 var pkiPath = flag.String("pki", "confs/pki.conf", "pki file")
 
 type Conf struct {
-	MyName       string
-	MyPublicKey  *BoxKey
-	MyPrivateKey *BoxKey
+	MyName string
 }
 
 func WriteDefaultConf(path string) {
-	myPublicKey, myPrivateKey, err := GenerateBoxKey(rand.Reader)
-	if err != nil {
-		log.Fatalf("GenerateBoxKey: %s", err)
-	}
-	conf := &Conf{
-		MyPublicKey:  myPublicKey,
-		MyPrivateKey: myPrivateKey,
-	}
-
+	conf := &Conf{}
 	data, err := json.MarshalIndent(conf, "", "  ")
 	if err != nil {
 		log.Fatalf("json encoding error: %s", err)
@@ -53,15 +42,13 @@ func main() {
 
 	conf := new(Conf)
 	ReadJSONFile(*confPath, conf)
-	if conf.MyName == "" || conf.MyPublicKey == nil || conf.MyPrivateKey == nil {
+	if conf.MyName == "" {
 		log.Fatalf("missing required fields: %s", *confPath)
 	}
 
 	gc := &GuiClient{
-		pki:          pki,
-		myName:       conf.MyName,
-		myPublicKey:  conf.MyPublicKey,
-		myPrivateKey: conf.MyPrivateKey,
+		pki:    pki,
+		myName: conf.MyName,
 	}
 	gc.Run()
 }

@@ -37,9 +37,8 @@ type convoReq struct {
 type connection struct {
 	sync.Mutex
 
-	ws        *websocket.Conn
-	srv       *server
-	publicKey *BoxKey
+	ws  *websocket.Conn
+	srv *server
 }
 
 func (srv *server) register(c *connection) {
@@ -202,12 +201,6 @@ func (srv *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pk, err := KeyFromString(r.URL.Query().Get("publickey"))
-	if err != nil {
-		http.Error(w, "expecting box key in publickey query parameter", http.StatusBadRequest)
-		return
-	}
-
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("Upgrade: %s", err)
@@ -215,9 +208,8 @@ func (srv *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	c := &connection{
-		ws:        ws,
-		srv:       srv,
-		publicKey: pk,
+		ws:  ws,
+		srv: srv,
 	}
 	srv.register(c)
 	c.readLoop()

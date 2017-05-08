@@ -15,7 +15,6 @@ type Client struct {
 	sync.Mutex
 
 	EntryServer string
-	MyPublicKey *BoxKey
 
 	ws *websocket.Conn
 
@@ -28,10 +27,9 @@ type ConvoHandler interface {
 	HandleConvoResponse(response *ConvoResponse)
 }
 
-func NewClient(entryServer string, publicKey *BoxKey) *Client {
+func NewClient(entryServer string) *Client {
 	c := &Client{
 		EntryServer: entryServer,
-		MyPublicKey: publicKey,
 
 		roundHandlers: make(map[uint32]ConvoHandler),
 	}
@@ -50,7 +48,7 @@ func (c *Client) Connect() error {
 		return fmt.Errorf("no convo handler")
 	}
 
-	wsaddr := fmt.Sprintf("%s/ws?publickey=%s", c.EntryServer, c.MyPublicKey.String())
+	wsaddr := fmt.Sprintf("%s/ws", c.EntryServer)
 	dialer := &websocket.Dialer{
 		HandshakeTimeout: 5 * time.Second,
 	}

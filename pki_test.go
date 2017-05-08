@@ -13,10 +13,6 @@ func Key(s string) *BoxKey {
 }
 
 var testPKI = &PKI{
-	People: map[string]*BoxKey{
-		"david": Key("st50pjmxgzv6pybrnxrxjd330s8hf37g5gzs1dqywy4bw3kdvcgg"),
-		"alice": Key("j10hpqtgnqc1y21xp5y7yamwa32jvdp89888q2semnxg95j4v82g"),
-	},
 	Servers: map[string]*ServerInfo{
 		"openstack1": {
 			Address:   "localhost",

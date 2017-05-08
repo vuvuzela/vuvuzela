@@ -5,30 +5,22 @@ import (
 	"crypto/rand"
 	"testing"
 	"time"
-
-	. "vuvuzela.io/vuvuzela"
 )
 
 func TestSoloConversation(t *testing.T) {
-	public, private, err := GenerateBoxKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
 	convo := &Conversation{
-		peerPublicKey: public,
-		myPublicKey:   public,
-		myPrivateKey:  private,
+		myUsername:   "alice@example.org",
+		peerUsername: "alice@example.org",
+		secretKey:    new([32]byte),
 	}
-	if convo.myRole() != convo.theirRole() {
-		t.Fatalf("expecting roles to match")
-	}
+	rand.Read(convo.secretKey[:])
 
 	msg := make([]byte, 256)
 	rand.Read(msg)
 
 	var round uint32 = 42
-	ctxt := convo.Seal(msg, round, convo.myRole())
-	xmsg, ok := convo.Open(ctxt, round, convo.theirRole())
+	ctxt := convo.Seal(msg, round)
+	xmsg, ok := convo.Open(ctxt, round)
 	if !ok {
 		t.Fatalf("failed to decrypt message")
 	}

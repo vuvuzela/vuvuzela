@@ -17,7 +17,6 @@ type ServerInfo struct {
 }
 
 type PKI struct {
-	People      map[string]*BoxKey
 	Servers     map[string]*ServerInfo
 	ServerOrder []string
 	EntryServer string

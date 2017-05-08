@@ -17,10 +17,8 @@ import (
 type GuiClient struct {
 	sync.Mutex
 
-	pki          *PKI
-	myName       string
-	myPublicKey  *BoxKey
-	myPrivateKey *BoxKey
+	pki    *PKI
+	myName string
 
 	gui    *gocui.Gui
 	client *Client
@@ -34,19 +32,13 @@ func (gc *GuiClient) switchConversation(peer string) {
 
 	convo, ok := gc.conversations[peer]
 	if !ok {
-		peerPublicKey, ok := gc.pki.People[peer]
-		if !ok {
-			gc.Warnf("unknown user: %s", peer)
-			return
-		}
 		convo = &Conversation{
-			pki:           gc.pki,
-			peerName:      peer,
-			peerPublicKey: peerPublicKey,
-			myPublicKey:   gc.myPublicKey,
-			myPrivateKey:  gc.myPrivateKey,
-			gui:           gc,
+			pki:          gc.pki,
+			myUsername:   gc.myName,
+			peerUsername: peer,
+			gui:          gc,
 		}
+		// TODO we need the secret key from Alpenhorn
 		convo.Init()
 		gc.conversations[peer] = convo
 	}
@@ -159,7 +151,7 @@ func (gc *GuiClient) layout(g *gocui.Gui) error {
 
 	partner := "(no partner)"
 	if !gc.selectedConvo.Solo() {
-		partner = gc.selectedConvo.peerName
+		partner = gc.selectedConvo.peerUsername
 	}
 
 	pv, err := g.SetView("partner", -1, maxY-2, len(partner)+1, maxY)
@@ -200,7 +192,7 @@ func quit(g *gocui.Gui, v *gocui.View) error {
 
 func (gc *GuiClient) Connect() error {
 	if gc.client == nil {
-		gc.client = NewClient(gc.pki.EntryServer, gc.myPublicKey)
+		gc.client = NewClient(gc.pki.EntryServer)
 	}
 	gc.activateConvo(gc.selectedConvo)
 	return gc.client.Connect()
