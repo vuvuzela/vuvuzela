@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"fmt"
 	"io/ioutil"
 	"strings"
@@ -10,26 +11,29 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/davidlazar/gocui"
 
+	"vuvuzela.io/alpenhorn"
 	. "vuvuzela.io/vuvuzela"
 	. "vuvuzela.io/vuvuzela/internal"
 )
 
 type GuiClient struct {
-	sync.Mutex
-
 	pki    *PKI
 	myName string
 
-	gui    *gocui.Gui
-	client *Client
+	gui             *gocui.Gui
+	convoClient     *Client
+	alpenhornClient *alpenhorn.Client
 
+	mu            sync.Mutex
 	selectedConvo *Conversation
 	conversations map[string]*Conversation
 }
 
-func (gc *GuiClient) switchConversation(peer string) {
-	var convo *Conversation
+func (gc *GuiClient) switchConversation(peer string, key *[32]byte) {
+	gc.mu.Lock()
+	defer gc.mu.Unlock()
 
+	var convo *Conversation
 	convo, ok := gc.conversations[peer]
 	if !ok {
 		convo = &Conversation{
@@ -38,10 +42,14 @@ func (gc *GuiClient) switchConversation(peer string) {
 			peerUsername: peer,
 			gui:          gc,
 		}
-		// TODO we need the secret key from Alpenhorn
 		convo.Init()
 		gc.conversations[peer] = convo
 	}
+	if key == nil {
+		key = new([32]byte)
+		rand.Read(key[:])
+	}
+	convo.secretKey = key
 
 	gc.selectedConvo = convo
 	gc.activateConvo(convo)
@@ -49,12 +57,12 @@ func (gc *GuiClient) switchConversation(peer string) {
 }
 
 func (gc *GuiClient) activateConvo(convo *Conversation) {
-	if gc.client != nil {
+	if gc.convoClient != nil {
 		convo.Lock()
 		convo.lastPeerResponding = false
 		convo.lastLatency = 0
 		convo.Unlock()
-		gc.client.SetConvoHandler(convo)
+		gc.convoClient.SetConvoHandler(convo)
 	}
 }
 
@@ -62,9 +70,19 @@ func (gc *GuiClient) handleLine(line string) error {
 	switch {
 	case line == "/quit":
 		return gocui.Quit
-	case strings.HasPrefix(line, "/talk "):
-		peer := line[6:]
-		gc.switchConversation(peer)
+	case strings.HasPrefix(line, "/call "):
+		username := line[6:]
+		friend := gc.alpenhornClient.GetFriend(username)
+		if friend == nil {
+			gc.Warnf("Friend not found: %s\n", username)
+			return nil
+		}
+		_ = friend.Call(0)
+		gc.Warnf("Calling %s ...\n", username)
+	case strings.HasPrefix(line, "/addfriend "):
+		username := line[11:]
+		_, _ = gc.alpenhornClient.SendFriendRequest(username, nil)
+		gc.Warnf("Queued friend request: %s\n", username)
 	default:
 		msg := strings.TrimSpace(line)
 		gc.selectedConvo.QueueTextMessage([]byte(msg))
@@ -190,12 +208,17 @@ func quit(g *gocui.Gui, v *gocui.View) error {
 	return gocui.Quit
 }
 
-func (gc *GuiClient) Connect() error {
-	if gc.client == nil {
-		gc.client = NewClient(gc.pki.EntryServer)
+func (gc *GuiClient) Connect() {
+	if err := gc.alpenhornClient.Connect(); err != nil {
+		gc.Warnf("Failed to connect to alpenhorn service: %s\n", err)
 	}
-	gc.activateConvo(gc.selectedConvo)
-	return gc.client.Connect()
+	gc.Warnf("Connected to alpenhorn service.\n")
+
+	if err := gc.convoClient.Connect(); err != nil {
+		gc.Warnf("Failed to connect to convo service: %s\n", err)
+		return
+	}
+	gc.Warnf("Connected to convo service.\n")
 }
 
 func (gc *GuiClient) Run() {
@@ -218,14 +241,13 @@ func (gc *GuiClient) Run() {
 	gui.SetLayout(gc.layout)
 
 	gc.conversations = make(map[string]*Conversation)
-	gc.switchConversation(gc.myName)
+	// We need an active conversation to render the GUI
+	// and to connect to the convo service.
+	gc.switchConversation(gc.myName, nil)
 
 	go func() {
 		time.Sleep(500 * time.Millisecond)
-		if err := gc.Connect(); err != nil {
-			gc.Warnf("Failed to connect: %s\n", err)
-		}
-		gc.Warnf("Connected: %s\n", gc.pki.EntryServer)
+		gc.Connect()
 	}()
 
 	err := gui.MainLoop()

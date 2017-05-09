@@ -1,54 +1,62 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
-	"io/ioutil"
+	"fmt"
+	"os"
+	"os/user"
+	"path/filepath"
 
 	log "github.com/Sirupsen/logrus"
 
+	"vuvuzela.io/alpenhorn"
 	. "vuvuzela.io/vuvuzela"
-	. "vuvuzela.io/vuvuzela/internal"
 )
 
-var doInit = flag.Bool("init", false, "create default config file")
-var confPath = flag.String("conf", "confs/client.conf", "config file")
+var username = flag.String("username", "", "Alpenhorn username")
 var pkiPath = flag.String("pki", "confs/pki.conf", "pki file")
-
-type Conf struct {
-	MyName string
-}
-
-func WriteDefaultConf(path string) {
-	conf := &Conf{}
-	data, err := json.MarshalIndent(conf, "", "  ")
-	if err != nil {
-		log.Fatalf("json encoding error: %s", err)
-	}
-	if err := ioutil.WriteFile(path, data, 0600); err != nil {
-		log.Fatalf("WriteFile: %s", err)
-	}
-}
 
 func main() {
 	flag.Parse()
 
-	if *doInit {
-		WriteDefaultConf(*confPath)
+	if *username == "" {
+		fmt.Println("no username specified")
+		os.Exit(1)
+	}
+
+	u, err := user.Current()
+	if err != nil {
+		log.Fatal(err)
+	}
+	confHome := filepath.Join(u.HomeDir, ".vuvuzela")
+	if err := os.MkdirAll(confHome, 0700); err != nil {
+		log.Fatal(err)
+	}
+
+	alpStatePath := filepath.Join(confHome, fmt.Sprintf("%s.state", *username))
+	alpenhornClient, err := alpenhorn.LoadClient(alpStatePath)
+	if os.IsNotExist(err) {
+		fmt.Printf("No client state found for username %s in %s.\n", *username, confHome)
+		fmt.Printf("Use vuvuzela-keygen to generate new client state.\n")
+		os.Exit(1)
+	}
+	if err != nil {
+		log.Fatalf("Failed to load alpenhorn client: %s", err)
 		return
 	}
 
+	keywheelPath := filepath.Join(confHome, fmt.Sprintf("%s.keywheel", *username))
+	alpenhornClient.KeywheelPersistPath = keywheelPath
+
 	pki := ReadPKI(*pkiPath)
 
-	conf := new(Conf)
-	ReadJSONFile(*confPath, conf)
-	if conf.MyName == "" {
-		log.Fatalf("missing required fields: %s", *confPath)
-	}
-
 	gc := &GuiClient{
-		pki:    pki,
-		myName: conf.MyName,
+		pki:             pki,
+		myName:          alpenhornClient.Username,
+		convoClient:     NewClient(pki.EntryServer),
+		alpenhornClient: alpenhornClient,
 	}
+	alpenhornClient.Handler = gc
+
 	gc.Run()
 }
