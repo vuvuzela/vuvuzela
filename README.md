@@ -55,65 +55,6 @@ servers generate noise that perturbs this metadata so that it is difficult to
 exploit.
 
 
-## Usage
-
-Follow these steps to run the Vuvuzela system locally using the provided
-sample configs.
-
-1. Install Vuvuzela (assuming `GOPATH=~/go`, requires Go 1.4 or later):
-
-        $ go get vuvuzela.io/vuvuzela/...
-
-  The remaining steps assume `PATH` contains `~/go/bin` and that the
-  current working directory is `~/go/src/vuvuzela.io/vuvuzela`.
-
-2. Start the last Vuvuzela server:
-
-        $ vuvuzela-server -conf confs/local-last.conf
-
-3. Start the middle server (in a new shell):
-
-        $ vuvuzela-server -conf confs/local-middle.conf
-
-4. Start the first server (in a new shell):
-
-        $ vuvuzela-server -conf confs/local-first.conf
-
-5. Start the entry server (in a new shell):
-
-        $ vuvuzela-entry-server -wait 1s
-
-6. Run the Vuvuzela client:
-
-        $ vuvuzela-client -conf confs/alice.conf
-
-The client supports these commands:
-
-* `/dial <user>` to dial another user
-* `/talk <user>` to start a conversation
-* `/talk <yourself>` to end a conversation
-
-
-## Deployment considerations
-
-This Vuvuzela implementation is not ready for wide-use deployment.
-In particular, we haven't yet implemented these crucial components:
-
-* **Public Key Infrastructure**:
-Vuvuzela assumes the existence of a PKI in which users can privately
-learn each others public keys.  This implementation uses `pki.conf`
-as a placeholder until we integrate a real PKI.
-
-* **CDN to distribute dialing dead drops**:
-Vuvuzela's dialing protocol (used to initiate conversations) uses a
-lot of server bandwidth.  To make dialing practical, Vuvuzela should
-use a CDN or BitTorrent to distribute the dialing dead drops.
-
-There is a lot more interesting work to do.  See the
-[issue tracker](https://github.com/vuvuzela/vuvuzela/issues)
-for more information.
-
-
 ## Acknowledgements
 
 This code is written by David Lazar with contributions from
@@ -121,5 +62,7 @@ Jelle van den Hooff, Nickolai Zeldovich, and Matei Zaharia.
 
 
 ## See also
+
+[Alpenhorn](https://github.com/vuvuzela/alpenhorn)
 
 [Vuvuzela web client](https://github.com/jlmart88/vuvuzela-web-client)
