@@ -96,8 +96,7 @@ func (gc *GuiClient) readLine(_ *gocui.Gui, v *gocui.View) error {
 	if len(v.Buffer()) == 0 {
 		return nil
 	}
-	_, cy := v.Cursor()
-	line, err := v.Line(cy - 1)
+	line, err := v.Line(0)
 	if err != nil {
 		return err
 	}
@@ -105,6 +104,7 @@ func (gc *GuiClient) readLine(_ *gocui.Gui, v *gocui.View) error {
 		return nil
 	}
 	v.Clear()
+	v.SetCursor(0, 0)
 
 	return gc.handleLine(line)
 }
@@ -250,6 +250,7 @@ func (gc *GuiClient) Run() {
 		gc.Connect()
 	}()
 
+	gocui.Edit = vuvuzelaEditor
 	err := gui.MainLoop()
 	if err != nil && err != gocui.Quit {
 		log.Panicln(err)
@@ -274,5 +275,24 @@ func (gc *GuiClient) Levels() []log.Level {
 		log.WarnLevel,
 		log.InfoLevel,
 		log.DebugLevel,
+	}
+}
+
+func vuvuzelaEditor(v *gocui.View, key gocui.Key, ch rune, mod gocui.Modifier) {
+	switch {
+	case ch != 0 && mod == 0:
+		v.EditWrite(ch)
+	case key == gocui.KeySpace:
+		v.EditWrite(' ')
+	case key == gocui.KeyBackspace || key == gocui.KeyBackspace2:
+		v.EditDelete(true)
+	case key == gocui.KeyDelete:
+		v.EditDelete(false)
+	case key == gocui.KeyInsert:
+		v.Overwrite = !v.Overwrite
+	case key == gocui.KeyArrowLeft:
+		v.MoveCursor(-1, 0, true)
+	case key == gocui.KeyArrowRight:
+		v.MoveCursor(1, 0, true)
 	}
 }
