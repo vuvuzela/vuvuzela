@@ -91,6 +91,53 @@ func (gc *GuiClient) handleLine(line string) error {
 	return nil
 }
 
+func (gc *GuiClient) tabComplete(_ *gocui.Gui, v *gocui.View) error {
+	if len(v.Buffer()) == 0 {
+		return nil
+	}
+	line, err := v.Line(0)
+	if err != nil {
+		return err
+	}
+	if line == "" {
+		return nil
+	}
+
+	if line[0] != '/' || line[len(line)-1] == ' ' {
+		return nil
+	}
+
+	args := strings.Fields(line[1:])
+	if len(args) == 0 {
+		return nil
+	}
+
+	prefix := args[len(args)-1]
+	completion := gc.closestFriend(prefix)
+	extra := completion[len(prefix):]
+	fmt.Fprintf(v, "%s", extra)
+	v.MoveCursor(len(extra), 0, true)
+	return nil
+}
+
+func (gc *GuiClient) closestFriend(prefix string) string {
+	match := prefix
+	nmatches := 0
+
+	for _, friend := range gc.alpenhornClient.GetFriends() {
+		if strings.HasPrefix(friend.Username, prefix) {
+			match = friend.Username
+			nmatches += 1
+		}
+	}
+
+	if nmatches == 1 {
+		return match
+	} else {
+		return prefix
+	}
+}
+
 func (gc *GuiClient) readLine(_ *gocui.Gui, v *gocui.View) error {
 	// HACK: pressing enter on startup causes panic
 	if len(v.Buffer()) == 0 {
@@ -233,6 +280,9 @@ func (gc *GuiClient) Run() {
 		log.Panicln(err)
 	}
 	if err := gui.SetKeybinding("input", gocui.KeyEnter, gocui.ModNone, gc.readLine); err != nil {
+		log.Panicln(err)
+	}
+	if err := gui.SetKeybinding("input", gocui.KeyTab, gocui.ModNone, gc.tabComplete); err != nil {
 		log.Panicln(err)
 	}
 	gui.ShowCursor = true
