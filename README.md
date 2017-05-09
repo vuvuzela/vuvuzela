@@ -2,11 +2,11 @@
 >
 > — [Stewart Baker](http://www.nybooks.com/articles/archives/2013/nov/21/snowden-leaks-and-public/), former General Counsel of the NSA
 
-|
 
 > *We kill people based on metadata*
 >
 > — [Michael Hayden](https://www.youtube.com/watch?v=kV2HDM86XgI&t=17m53s), former Director of the NSA
+
 
 # Vuvuzela
 
