@@ -2,6 +2,7 @@
 >
 > — [Stewart Baker](http://www.nybooks.com/articles/archives/2013/nov/21/snowden-leaks-and-public/), former General Counsel of the NSA
 
+###
 
 > *We kill people based on metadata*
 >
