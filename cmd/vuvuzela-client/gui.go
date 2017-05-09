@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io/ioutil"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -66,28 +67,69 @@ func (gc *GuiClient) activateConvo(convo *Conversation) {
 	}
 }
 
-func (gc *GuiClient) handleLine(line string) error {
-	switch {
-	case line == "/quit":
+var commands = map[string]func(*GuiClient, []string) error{
+	"quit": func(_ *GuiClient, _ []string) error {
 		return gocui.Quit
-	case strings.HasPrefix(line, "/call "):
-		username := line[6:]
+	},
+
+	"call": func(gc *GuiClient, args []string) error {
+		if len(args) != 1 {
+			gc.Warnf("Missing username\n")
+			return nil
+		}
+
+		username := args[0]
 		friend := gc.alpenhornClient.GetFriend(username)
 		if friend == nil {
 			gc.Warnf("Friend not found: %s\n", username)
 			return nil
 		}
+
 		_ = friend.Call(0)
 		gc.Warnf("Calling %s ...\n", username)
-	case strings.HasPrefix(line, "/addfriend "):
-		username := line[11:]
+		return nil
+	},
+
+	"addfriend": func(gc *GuiClient, args []string) error {
+		if len(args) != 1 {
+			gc.Warnf("Missing username\n")
+			return nil
+		}
+
+		username := args[0]
 		_, _ = gc.alpenhornClient.SendFriendRequest(username, nil)
 		gc.Warnf("Queued friend request: %s\n", username)
-	default:
-		msg := strings.TrimSpace(line)
-		gc.selectedConvo.QueueTextMessage([]byte(msg))
-		gc.Printf("<%s> %s\n", gc.myName, msg)
+		return nil
+	},
+}
+
+func (gc *GuiClient) handleLine(line string) error {
+	if line[0] == '/' {
+		args := strings.Fields(line[1:])
+		if len(args) == 0 {
+			args = []string{""}
+		}
+
+		handler, ok := commands[args[0]]
+		if !ok {
+			gc.Warnf("Unknown command: %s\n", args[0])
+			validCmds := make([]string, 0)
+			for cmd, _ := range commands {
+				validCmds = append(validCmds, cmd)
+			}
+			sort.Strings(validCmds)
+			gc.Warnf("Valid commands: %v\n", validCmds)
+		} else {
+			return handler(gc, args[1:])
+		}
+	} else {
+		if gc.selectedConvo.QueueTextMessage([]byte(line)) {
+			gc.Printf("<%s> %s\n", gc.myName, line)
+		} else {
+			gc.Warnf("Queue full, message not sent to %s: %s\n", gc.myName, line)
+		}
 	}
+
 	return nil
 }
 
