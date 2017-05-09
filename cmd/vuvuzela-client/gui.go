@@ -92,13 +92,7 @@ func (gc *GuiClient) handleLine(line string) error {
 }
 
 func (gc *GuiClient) tabComplete(_ *gocui.Gui, v *gocui.View) error {
-	if len(v.Buffer()) == 0 {
-		return nil
-	}
-	line, err := v.Line(0)
-	if err != nil {
-		return err
-	}
+	line := strings.TrimRight(v.Buffer(), "\n")
 	if line == "" {
 		return nil
 	}
@@ -139,19 +133,14 @@ func (gc *GuiClient) closestFriend(prefix string) string {
 }
 
 func (gc *GuiClient) readLine(_ *gocui.Gui, v *gocui.View) error {
-	// HACK: pressing enter on startup causes panic
-	if len(v.Buffer()) == 0 {
-		return nil
-	}
-	line, err := v.Line(0)
-	if err != nil {
-		return err
-	}
+	line := strings.TrimRight(v.Buffer(), "\n")
 	if line == "" {
 		return nil
 	}
+
+	v.EditNewLine()
+	v.MoveCursor(0, -1, true)
 	v.Clear()
-	v.SetCursor(0, 0)
 
 	return gc.handleLine(line)
 }
