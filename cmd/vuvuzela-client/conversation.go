@@ -88,8 +88,13 @@ func (cm *ConvoMessage) Unmarshal(msg []byte) error {
 	return nil
 }
 
-func (c *Conversation) QueueTextMessage(msg []byte) {
-	c.outQueue <- msg
+func (c *Conversation) QueueTextMessage(msg []byte) bool {
+	select {
+	case c.outQueue <- msg:
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Conversation) NextConvoRequest(round uint32) *ConvoRequest {
