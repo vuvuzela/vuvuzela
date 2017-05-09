@@ -8,7 +8,7 @@ import (
 	"golang.org/x/crypto/nacl/box"
 
 	"vuvuzela.io/crypto/onionbox"
-	. "vuvuzela.io/vuvuzela/internal"
+	"vuvuzela.io/vuvuzela/internal"
 )
 
 type ServerInfo struct {
@@ -24,7 +24,7 @@ type PKI struct {
 
 func ReadPKI(jsonPath string) *PKI {
 	pki := new(PKI)
-	ReadJSONFile(jsonPath, pki)
+	internal.ReadJSONFile(jsonPath, pki)
 	if len(pki.ServerOrder) == 0 {
 		log.Fatalf("%q: ServerOrder must contain at least one server", jsonPath)
 	}

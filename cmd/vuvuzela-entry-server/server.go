@@ -12,8 +12,8 @@ import (
 	"github.com/gorilla/websocket"
 
 	"vuvuzela.io/concurrency"
-	. "vuvuzela.io/vuvuzela"
-	. "vuvuzela.io/vuvuzela/internal"
+	"vuvuzela.io/vuvuzela"
+	"vuvuzela.io/vuvuzela/internal"
 	"vuvuzela.io/vuvuzela/vrpc"
 )
 
@@ -78,7 +78,7 @@ func (c *connection) Close() {
 func (c *connection) Send(v interface{}) {
 	const writeWait = 10 * time.Second
 
-	e, err := Envelop(v)
+	e, err := vuvuzela.Envelop(v)
 	if err != nil {
 		log.WithFields(log.Fields{"bug": true, "call": "Envelop"}).Error(err)
 		return
@@ -97,7 +97,7 @@ func (c *connection) Send(v interface{}) {
 
 func (c *connection) readLoop() {
 	for {
-		var e Envelope
+		var e vuvuzela.Envelope
 		if err := c.ws.ReadJSON(&e); err != nil {
 			log.WithFields(log.Fields{"call": "ReadJSON"}).Debug(err)
 			c.Close()
@@ -107,7 +107,7 @@ func (c *connection) readLoop() {
 		v, err := e.Open()
 		if err != nil {
 			msg := fmt.Sprintf("error parsing request: %s", err)
-			go c.Send(&BadRequestError{Err: msg})
+			go c.Send(&vuvuzela.BadRequestError{Err: msg})
 		}
 		go c.handleRequest(v)
 	}
@@ -115,19 +115,19 @@ func (c *connection) readLoop() {
 
 func (c *connection) handleRequest(v interface{}) {
 	switch v := v.(type) {
-	case *ConvoRequest:
+	case *vuvuzela.ConvoRequest:
 		c.handleConvoRequest(v)
 	}
 }
 
-func (c *connection) handleConvoRequest(r *ConvoRequest) {
+func (c *connection) handleConvoRequest(r *vuvuzela.ConvoRequest) {
 	srv := c.srv
 	srv.convoMu.Lock()
 	currRound := srv.convoRound
 	if r.Round != currRound {
 		srv.convoMu.Unlock()
 		err := fmt.Sprintf("wrong round (currently %d)", currRound)
-		go c.Send(&ConvoError{Round: r.Round, Err: err})
+		go c.Send(&vuvuzela.ConvoError{Round: r.Round, Err: err})
 		return
 	}
 	rr := &convoReq{
@@ -140,14 +140,14 @@ func (c *connection) handleConvoRequest(r *ConvoRequest) {
 
 func (srv *server) convoRoundLoop() {
 	for {
-		if err := NewConvoRound(srv.firstServer, srv.convoRound); err != nil {
+		if err := vuvuzela.NewConvoRound(srv.firstServer, srv.convoRound); err != nil {
 			log.WithFields(log.Fields{"service": "convo", "round": srv.convoRound, "call": "NewConvoRound"}).Error(err)
 			time.Sleep(10 * time.Second)
 			continue
 		}
 		log.WithFields(log.Fields{"service": "convo", "round": srv.convoRound}).Info("Broadcast")
 
-		broadcast(srv.allConnections(), &AnnounceConvoRound{srv.convoRound})
+		broadcast(srv.allConnections(), &vuvuzela.AnnounceConvoRound{srv.convoRound})
 		time.Sleep(*receiveWait)
 
 		srv.convoMu.Lock()
@@ -170,10 +170,10 @@ func (srv *server) runConvoRound(round uint32, requests []*convoReq) {
 	rlog := log.WithFields(log.Fields{"service": "convo", "round": round})
 	rlog.WithFields(log.Fields{"call": "RunConvoRound", "onions": len(onions)}).Info()
 
-	replies, err := RunConvoRound(srv.firstServer, round, onions)
+	replies, err := vuvuzela.RunConvoRound(srv.firstServer, round, onions)
 	if err != nil {
 		rlog.WithFields(log.Fields{"call": "RunConvoRound"}).Error(err)
-		broadcast(conns, &ConvoError{Round: round, Err: "server error"})
+		broadcast(conns, &vuvuzela.ConvoError{Round: round, Err: "server error"})
 		return
 	}
 
@@ -181,7 +181,7 @@ func (srv *server) runConvoRound(round uint32, requests []*convoReq) {
 
 	concurrency.ParallelFor(len(replies), func(p *concurrency.P) {
 		for i, ok := p.Next(); ok; i, ok = p.Next() {
-			reply := &ConvoResponse{
+			reply := &vuvuzela.ConvoResponse{
 				Round: round,
 				Onion: replies[i],
 			}
@@ -217,13 +217,13 @@ func (srv *server) wsHandler(w http.ResponseWriter, r *http.Request) {
 
 var addr = flag.String("addr", ":8080", "http service address")
 var pkiPath = flag.String("pki", "confs/pki.conf", "pki file")
-var receiveWait = flag.Duration("wait", DefaultReceiveWait, "")
+var receiveWait = flag.Duration("wait", vuvuzela.DefaultReceiveWait, "")
 
 func main() {
 	flag.Parse()
-	log.SetFormatter(&ServerFormatter{})
+	log.SetFormatter(&internal.ServerFormatter{})
 
-	pki := ReadPKI(*pkiPath)
+	pki := vuvuzela.ReadPKI(*pkiPath)
 
 	firstServer, err := vrpc.Dial("tcp", pki.FirstServer(), runtime.NumCPU())
 	if err != nil {

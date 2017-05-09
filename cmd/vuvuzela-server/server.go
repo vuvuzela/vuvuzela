@@ -16,8 +16,8 @@ import (
 	log "github.com/Sirupsen/logrus"
 
 	vrand "vuvuzela.io/crypto/rand"
-	. "vuvuzela.io/vuvuzela"
-	. "vuvuzela.io/vuvuzela/internal"
+	"vuvuzela.io/vuvuzela"
+	"vuvuzela.io/vuvuzela/internal"
 	"vuvuzela.io/vuvuzela/vrpc"
 )
 
@@ -28,8 +28,8 @@ var muOverride = flag.Float64("mu", -1.0, "override ConvoMu in conf file")
 
 type Conf struct {
 	ServerName string
-	PublicKey  *BoxKey
-	PrivateKey *BoxKey
+	PublicKey  *vuvuzela.BoxKey
+	PrivateKey *vuvuzela.BoxKey
 	ListenAddr string `json:",omitempty"`
 	DebugAddr  string `json:",omitempty"`
 
@@ -38,7 +38,7 @@ type Conf struct {
 }
 
 func WriteDefaultConf(path string) {
-	myPublicKey, myPrivateKey, err := GenerateBoxKey(rand.Reader)
+	myPublicKey, myPrivateKey, err := vuvuzela.GenerateBoxKey(rand.Reader)
 	if err != nil {
 		log.Fatalf("GenerateKey: %s", err)
 	}
@@ -60,7 +60,7 @@ func WriteDefaultConf(path string) {
 
 func main() {
 	flag.Parse()
-	log.SetFormatter(&ServerFormatter{})
+	log.SetFormatter(&internal.ServerFormatter{})
 
 	if *confPath == "" {
 		log.Fatalf("must specify -conf flag")
@@ -71,10 +71,10 @@ func main() {
 		return
 	}
 
-	pki := ReadPKI(*pkiPath)
+	pki := vuvuzela.ReadPKI(*pkiPath)
 
 	conf := new(Conf)
-	ReadJSONFile(*confPath, conf)
+	internal.ReadJSONFile(*confPath, conf)
 	if conf.ServerName == "" || conf.PublicKey == nil || conf.PrivateKey == nil {
 		log.Fatalf("missing required fields: %s", *confPath)
 	}
@@ -94,7 +94,7 @@ func main() {
 
 	var idle sync.Mutex
 
-	convoService := &ConvoService{
+	convoService := &vuvuzela.ConvoService{
 		Idle: &idle,
 
 		Laplace: vrand.Laplace{
@@ -109,7 +109,7 @@ func main() {
 		Client:     client,
 		LastServer: client == nil,
 	}
-	InitConvoService(convoService)
+	vuvuzela.InitConvoService(convoService)
 
 	if convoService.LastServer {
 		histogram := &Histogram{Mu: conf.ConvoMu, NumServers: len(pki.ServerOrder)}
@@ -128,7 +128,7 @@ func main() {
 	}
 
 	if conf.ListenAddr == "" {
-		conf.ListenAddr = DefaultServerAddr
+		conf.ListenAddr = vuvuzela.DefaultServerAddr
 	}
 	listen, err := net.Listen("tcp", conf.ListenAddr)
 	if err != nil {

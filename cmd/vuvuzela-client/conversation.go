@@ -14,13 +14,13 @@ import (
 	"golang.org/x/crypto/nacl/secretbox"
 
 	"vuvuzela.io/crypto/onionbox"
-	. "vuvuzela.io/vuvuzela"
+	"vuvuzela.io/vuvuzela"
 )
 
 type Conversation struct {
 	sync.RWMutex
 
-	pki          *PKI
+	pki          *vuvuzela.PKI
 	myUsername   string
 	peerUsername string
 	secretKey    *[32]byte
@@ -45,7 +45,7 @@ func (c *Conversation) Init() {
 
 type pendingRound struct {
 	onionSharedKeys []*[32]byte
-	sentMessage     [SizeEncryptedMessage]byte
+	sentMessage     [vuvuzela.SizeEncryptedMessage]byte
 }
 
 type ConvoMessage struct {
@@ -61,7 +61,7 @@ type TimestampMessage struct {
 	Timestamp time.Time
 }
 
-func (cm *ConvoMessage) Marshal() (msg [SizeMessage]byte) {
+func (cm *ConvoMessage) Marshal() (msg [vuvuzela.SizeMessage]byte) {
 	switch v := cm.Body.(type) {
 	case *TimestampMessage:
 		msg[0] = 0
@@ -97,7 +97,7 @@ func (c *Conversation) QueueTextMessage(msg []byte) bool {
 	}
 }
 
-func (c *Conversation) NextConvoRequest(round uint32) *ConvoRequest {
+func (c *Conversation) NextConvoRequest(round uint32) *vuvuzela.ConvoRequest {
 	c.Lock()
 	c.lastRound = round
 	c.Unlock()
@@ -118,16 +118,16 @@ func (c *Conversation) NextConvoRequest(round uint32) *ConvoRequest {
 	}
 	msgdata := msg.Marshal()
 
-	var encmsg [SizeEncryptedMessage]byte
+	var encmsg [vuvuzela.SizeEncryptedMessage]byte
 	ctxt := c.Seal(msgdata[:], round)
 	copy(encmsg[:], ctxt)
 
-	exchange := &ConvoExchange{
+	exchange := &vuvuzela.ConvoExchange{
 		DeadDrop:         c.deadDrop(round),
 		EncryptedMessage: encmsg,
 	}
 
-	onion, sharedKeys := onionbox.Seal(exchange.Marshal(), ForwardNonce(round), c.pki.ServerKeys().Keys())
+	onion, sharedKeys := onionbox.Seal(exchange.Marshal(), vuvuzela.ForwardNonce(round), c.pki.ServerKeys().Keys())
 
 	pr := &pendingRound{
 		onionSharedKeys: sharedKeys,
@@ -137,13 +137,13 @@ func (c *Conversation) NextConvoRequest(round uint32) *ConvoRequest {
 	c.pendingRounds[round] = pr
 	c.Unlock()
 
-	return &ConvoRequest{
+	return &vuvuzela.ConvoRequest{
 		Round: round,
 		Onion: onion,
 	}
 }
 
-func (c *Conversation) HandleConvoResponse(r *ConvoResponse) {
+func (c *Conversation) HandleConvoResponse(r *vuvuzela.ConvoResponse) {
 	rlog := log.WithFields(log.Fields{"round": r.Round})
 
 	var responding bool
@@ -163,7 +163,7 @@ func (c *Conversation) HandleConvoResponse(r *ConvoResponse) {
 		return
 	}
 
-	encmsg, ok := onionbox.Open(r.Onion, BackwardNonce(r.Round), pr.onionSharedKeys)
+	encmsg, ok := onionbox.Open(r.Onion, vuvuzela.BackwardNonce(r.Round), pr.onionSharedKeys)
 	if !ok {
 		rlog.Error("decrypting onion failed")
 		return
@@ -239,7 +239,7 @@ func (c *Conversation) Open(ctxt []byte, round uint32) ([]byte, bool) {
 	return secretbox.Open(nil, ctxt, &nonce, c.secretKey)
 }
 
-func (c *Conversation) deadDrop(round uint32) (id DeadDrop) {
+func (c *Conversation) deadDrop(round uint32) (id vuvuzela.DeadDrop) {
 	h := hmac.New(sha256.New, c.secretKey[:])
 	h.Write([]byte("DeadDrop"))
 	binary.Write(h, binary.BigEndian, round)

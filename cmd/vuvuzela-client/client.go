@@ -8,7 +8,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/gorilla/websocket"
 
-	. "vuvuzela.io/vuvuzela"
+	"vuvuzela.io/vuvuzela"
 )
 
 type Client struct {
@@ -23,8 +23,8 @@ type Client struct {
 }
 
 type ConvoHandler interface {
-	NextConvoRequest(round uint32) *ConvoRequest
-	HandleConvoResponse(response *ConvoResponse)
+	NextConvoRequest(round uint32) *vuvuzela.ConvoRequest
+	HandleConvoResponse(response *vuvuzela.ConvoResponse)
 }
 
 func NewClient(entryServer string) *Client {
@@ -68,7 +68,7 @@ func (c *Client) Close() {
 func (c *Client) Send(v interface{}) {
 	const writeWait = 10 * time.Second
 
-	e, err := Envelop(v)
+	e, err := vuvuzela.Envelop(v)
 	if err != nil {
 		log.WithFields(log.Fields{"bug": true, "call": "Envelop"}).Error(err)
 		return
@@ -87,7 +87,7 @@ func (c *Client) Send(v interface{}) {
 
 func (c *Client) readLoop() {
 	for {
-		var e Envelope
+		var e vuvuzela.Envelope
 		if err := c.ws.ReadJSON(&e); err != nil {
 			log.WithFields(log.Fields{"call": "ReadJSON"}).Debug(err)
 			c.Close()
@@ -105,23 +105,23 @@ func (c *Client) readLoop() {
 
 func (c *Client) handleResponse(v interface{}) {
 	switch v := v.(type) {
-	case *BadRequestError:
+	case *vuvuzela.BadRequestError:
 		log.Printf("bad request error: %s", v.Error())
-	case *AnnounceConvoRound:
+	case *vuvuzela.AnnounceConvoRound:
 		c.Send(c.nextConvoRequest(v.Round))
-	case *ConvoResponse:
+	case *vuvuzela.ConvoResponse:
 		c.deliverConvoResponse(v)
 	}
 }
 
-func (c *Client) nextConvoRequest(round uint32) *ConvoRequest {
+func (c *Client) nextConvoRequest(round uint32) *vuvuzela.ConvoRequest {
 	c.Lock()
 	c.roundHandlers[round] = c.convoHandler
 	c.Unlock()
 	return c.convoHandler.NextConvoRequest(round)
 }
 
-func (c *Client) deliverConvoResponse(r *ConvoResponse) {
+func (c *Client) deliverConvoResponse(r *vuvuzela.ConvoResponse) {
 	c.Lock()
 	convo, ok := c.roundHandlers[r.Round]
 	delete(c.roundHandlers, r.Round)

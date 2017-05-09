@@ -15,12 +15,12 @@ import (
 	"github.com/davidlazar/gocui"
 
 	"vuvuzela.io/alpenhorn"
-	. "vuvuzela.io/vuvuzela"
-	. "vuvuzela.io/vuvuzela/internal"
+	"vuvuzela.io/vuvuzela"
+	"vuvuzela.io/vuvuzela/internal"
 )
 
 type GuiClient struct {
-	pki    *PKI
+	pki    *vuvuzela.PKI
 	myName string
 
 	gui             *gocui.Gui
@@ -277,7 +277,7 @@ func (gc *GuiClient) layout(g *gocui.Gui) error {
 		v.Frame = false
 		log.AddHook(gc)
 		log.SetOutput(ioutil.Discard)
-		log.SetFormatter(&GuiFormatter{})
+		log.SetFormatter(&internal.GuiFormatter{})
 	}
 	sv, err := g.SetView("status", -1, maxY-3, maxX, maxY-1)
 	if err != nil {

@@ -10,7 +10,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 
 	"vuvuzela.io/alpenhorn"
-	. "vuvuzela.io/vuvuzela"
+	"vuvuzela.io/vuvuzela"
 )
 
 var username = flag.String("username", "", "Alpenhorn username")
@@ -48,7 +48,7 @@ func main() {
 	keywheelPath := filepath.Join(confHome, fmt.Sprintf("%s.keywheel", *username))
 	alpenhornClient.KeywheelPersistPath = keywheelPath
 
-	pki := ReadPKI(*pkiPath)
+	pki := vuvuzela.ReadPKI(*pkiPath)
 
 	gc := &GuiClient{
 		pki:             pki,
