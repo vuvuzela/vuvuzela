@@ -143,34 +143,48 @@ func (gc *GuiClient) tabComplete(_ *gocui.Gui, v *gocui.View) error {
 		return nil
 	}
 
+	choices := make([]string, 0)
 	args := strings.Fields(line[1:])
 	if len(args) == 0 {
 		return nil
 	}
 
+	if len(args) == 1 {
+		for cmd, _ := range commands {
+			choices = append(choices, cmd)
+		}
+	} else {
+		for _, friend := range gc.alpenhornClient.GetFriends() {
+			choices = append(choices, friend.Username)
+		}
+	}
+
 	prefix := args[len(args)-1]
-	completion := gc.closestFriend(prefix)
-	extra := completion[len(prefix):]
-	fmt.Fprintf(v, "%s", extra)
-	v.MoveCursor(len(extra), 0, true)
+	completion, match := completePrefix(prefix, choices)
+	if !match {
+		return nil
+	}
+
+	fmt.Fprintf(v, "%s ", completion)
+	v.MoveCursor(len(completion)+1, 0, true)
 	return nil
 }
 
-func (gc *GuiClient) closestFriend(prefix string) string {
+func completePrefix(prefix string, choices []string) (string, bool) {
 	match := prefix
 	nmatches := 0
 
-	for _, friend := range gc.alpenhornClient.GetFriends() {
-		if strings.HasPrefix(friend.Username, prefix) {
-			match = friend.Username
+	for _, choice := range choices {
+		if strings.HasPrefix(choice, prefix) {
+			match = choice[len(prefix):]
 			nmatches += 1
 		}
 	}
 
 	if nmatches == 1 {
-		return match
+		return match, true
 	} else {
-		return prefix
+		return "", false
 	}
 }
 
