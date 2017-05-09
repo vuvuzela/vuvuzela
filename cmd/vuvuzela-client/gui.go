@@ -2,11 +2,13 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"io/ioutil"
 	"sort"
 	"strings"
 	"sync"
+	"text/tabwriter"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
@@ -70,6 +72,30 @@ func (gc *GuiClient) activateConvo(convo *Conversation) {
 var commands = map[string]func(*GuiClient, []string) error{
 	"quit": func(_ *GuiClient, _ []string) error {
 		return gocui.Quit
+	},
+
+	"list": func(gc *GuiClient, _ []string) error {
+		friends := gc.alpenhornClient.GetFriends()
+		if len(friends) > 0 {
+			mv, err := gc.gui.View("main")
+			if err != nil {
+				return err
+			}
+
+			fmt.Fprintf(mv, "--- Friend List ---\n")
+			tw := tabwriter.NewWriter(mv, 0, 0, 1, ' ', 0)
+			for i, friend := range friends {
+				keyRound, key := friend.UnsafeKeywheelState()
+				keyStr := base64.RawURLEncoding.EncodeToString(key[:])[:12]
+				fmt.Fprintf(tw, "%d.\t%s\t{%d|%s...}\n", i, friend.Username, keyRound, keyStr)
+			}
+			tw.Flush()
+			gc.gui.Flush()
+		} else {
+			gc.Warnf("No friends in your address book.\n")
+		}
+
+		return nil
 	},
 
 	"call": func(gc *GuiClient, args []string) error {
