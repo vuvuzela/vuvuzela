@@ -127,6 +127,23 @@ var commands = map[string]func(*GuiClient, []string) error{
 		gc.Warnf("Queued friend request: %s\n", username)
 		return nil
 	},
+
+	"delfriend": func(gc *GuiClient, args []string) error {
+		if len(args) != 1 {
+			gc.Warnf("Missing username\n")
+			return nil
+		}
+
+		username := args[0]
+		u := gc.alpenhornClient.GetFriend(username)
+		if u == nil {
+			gc.Warnf("Cannot find friend %s\n", username)
+		} else {
+			u.Remove()
+			gc.Warnf("Removed friend %s\n", username)
+		}
+		return nil
+	},
 }
 
 func (gc *GuiClient) handleLine(line string) error {
