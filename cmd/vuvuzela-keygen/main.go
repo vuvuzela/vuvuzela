@@ -14,6 +14,7 @@ import (
 
 	"vuvuzela.io/alpenhorn"
 	"vuvuzela.io/alpenhorn/config"
+	"vuvuzela.io/alpenhorn/errors"
 )
 
 var (
@@ -38,13 +39,39 @@ func main() {
 		os.Exit(1)
 	}
 
-	alpConfig, err := config.ReadFile(*serverConfPath)
+	globalConf, err := config.ReadGlobalConfigFile(*serverConfPath)
 	if err != nil {
 		log.Fatal(err)
 	}
+	alpConf, err := globalConf.AlpenhornConfig()
+	if err != nil {
+		log.Fatalf("error reading alpenhorn config from %q: %s", *serverConfPath, err)
+	}
+	vzConf, err := globalConf.VuvuzelaConfig()
+	if err != nil {
+		log.Fatalf("error reading vuvuzela config from %q: %s", *serverConfPath, err)
+	}
+	if err := checkAlpenhornConfig(alpConf); err != nil {
+		log.Fatalf("bad server config: %s", err)
+	}
+	if err := checkVuvuzelaConfig(vzConf); err != nil {
+		log.Fatalf("bad server config: %s", err)
+	}
 
-	var connectionSettings alpenhorn.ConnectionSettings
-	connectionSettings.Bootstrap(alpConfig.AlpenhornSettings, alpConfig.ServerMap)
+	alpConnSettings := alpenhorn.ConnectionSettings{
+		EntryAddr: alpConf.Coordinator.ClientAddress,
+		PKGAddrs:  make([]string, len(alpConf.PKGs)),
+		PKGKeys:   make([]ed25519.PublicKey, len(alpConf.PKGs)),
+		Mixers:    make([]ed25519.PublicKey, len(alpConf.Mixers)),
+		CDNKey:    alpConf.CDN.Key,
+	}
+	for i, pkg := range alpConf.PKGs {
+		alpConnSettings.PKGAddrs[i] = pkg.ClientAddress
+		alpConnSettings.PKGKeys[i] = pkg.Key
+	}
+	for i, mixer := range alpConf.Mixers {
+		alpConnSettings.Mixers[i] = mixer.Key
+	}
 
 	u, err := user.Current()
 	if err != nil {
@@ -72,7 +99,7 @@ func main() {
 		LongTermPrivateKey: privateKey,
 		LongTermPublicKey:  publicKey,
 
-		ConnectionSettings: connectionSettings,
+		ConnectionSettings: alpConnSettings,
 
 		ClientPersistPath: clientDest,
 	}
@@ -84,14 +111,13 @@ func main() {
 
 	fmt.Printf("Wrote new Alpenhorn client to %s\n", clientDest)
 
-	pkgs := alpConfig.GetServers(alpConfig.PKGServers)
-	for _, pkg := range pkgs {
-		err := client.Register(*username, pkg.Address, pkg.PublicKey)
+	for _, pkg := range alpConf.PKGs {
+		err := client.Register(*username, pkg.ClientAddress, pkg.Key)
 		if err != nil {
-			fmt.Printf("! Failed to register with %s: %s\n", pkg.Address, err)
+			fmt.Printf("! Failed to register with %s: %s\n", pkg.ClientAddress, err)
 			continue
 		}
-		fmt.Printf("Registered with %s\n", pkg.Address)
+		fmt.Printf("Registered with %s\n", pkg.ClientAddress)
 	}
 
 	fmt.Printf("* Username: %s\n", *username)
@@ -120,4 +146,36 @@ func checkOverwrite(path string) {
 	if yesno[0] != 'y' && yesno[0] != 'Y' {
 		os.Exit(1)
 	}
+}
+
+func checkAlpenhornConfig(alpConf *config.AlpenhornConfig) error {
+	if alpConf.Coordinator.ClientAddress == "" {
+		return errors.New("no alpenhorn coordinator address")
+	}
+	if alpConf.CDN.Key == nil {
+		return errors.New("no alpenhorn cdn key")
+	}
+	for i, pkg := range alpConf.PKGs {
+		if pkg.Key == nil || pkg.ClientAddress == "" {
+			return errors.New("pkg %d is missing key or client address", i+1)
+		}
+	}
+	for i, mixer := range alpConf.Mixers {
+		if mixer.Key == nil {
+			return errors.New("alpenhorn mixer %d has no key", i+1)
+		}
+	}
+	return nil
+}
+
+func checkVuvuzelaConfig(vzConf *config.VuvuzelaConfig) error {
+	if vzConf.Coordinator.ClientAddress == "" {
+		return errors.New("no vuvuzela coordinator address")
+	}
+	for i, mixer := range vzConf.Mixers {
+		if mixer.Key == nil {
+			return errors.New("vuvuzela mixer %d has no key", i+1)
+		}
+	}
+	return nil
 }
