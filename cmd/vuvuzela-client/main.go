@@ -8,13 +8,14 @@ import (
 	"path/filepath"
 
 	log "github.com/Sirupsen/logrus"
+	"golang.org/x/crypto/ed25519"
 
 	"vuvuzela.io/alpenhorn"
-	"vuvuzela.io/vuvuzela"
+	"vuvuzela.io/alpenhorn/config"
 )
 
 var username = flag.String("username", "", "Alpenhorn username")
-var pkiPath = flag.String("pki", "confs/pki.conf", "pki file")
+var serverConfPath = flag.String("servers", "", "path to server config")
 
 func main() {
 	flag.Parse()
@@ -48,12 +49,29 @@ func main() {
 	keywheelPath := filepath.Join(confHome, fmt.Sprintf("%s.keywheel", *username))
 	alpenhornClient.KeywheelPersistPath = keywheelPath
 
-	pki := vuvuzela.ReadPKI(*pkiPath)
+	// Reading the global config is a temporary kludge until we save
+	// Vuvuzela's connection settings in user state.
+	globalConf, err := config.ReadGlobalConfigFile(*serverConfPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	vzConf, err := globalConf.VuvuzelaConfig()
+	if err != nil {
+		log.Fatalf("error reading vuvuzela config from %q: %s", *serverConfPath, err)
+	}
+	mixers := make([]ed25519.PublicKey, len(vzConf.Mixers))
+	for i, mixer := range vzConf.Mixers {
+		mixers[i] = mixer.Key
+	}
+
+	vzClient := &Client{
+		EntryServer: vzConf.Coordinator.ClientAddress,
+		Mixers:      mixers,
+	}
 
 	gc := &GuiClient{
-		pki:             pki,
 		myName:          alpenhornClient.Username,
-		convoClient:     NewClient(pki.EntryServer),
+		convoClient:     vzClient,
 		alpenhornClient: alpenhornClient,
 	}
 	alpenhornClient.Handler = gc

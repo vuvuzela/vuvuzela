@@ -13,14 +13,12 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"golang.org/x/crypto/nacl/secretbox"
 
-	"vuvuzela.io/crypto/onionbox"
-	"vuvuzela.io/vuvuzela"
+	"vuvuzela.io/vuvuzela/mixnet"
 )
 
 type Conversation struct {
 	sync.RWMutex
 
-	pki          *vuvuzela.PKI
 	myUsername   string
 	peerUsername string
 	secretKey    *[32]byte
@@ -45,7 +43,7 @@ func (c *Conversation) Init() {
 
 type pendingRound struct {
 	onionSharedKeys []*[32]byte
-	sentMessage     [vuvuzela.SizeEncryptedMessage]byte
+	sentMessage     [mixnet.SizeEncryptedMessageBody]byte
 }
 
 type ConvoMessage struct {
@@ -61,7 +59,7 @@ type TimestampMessage struct {
 	Timestamp time.Time
 }
 
-func (cm *ConvoMessage) Marshal() (msg [vuvuzela.SizeMessage]byte) {
+func (cm *ConvoMessage) Marshal() (msg [mixnet.SizeMessageBody]byte) {
 	switch v := cm.Body.(type) {
 	case *TimestampMessage:
 		msg[0] = 0
@@ -97,7 +95,7 @@ func (c *Conversation) QueueTextMessage(msg []byte) bool {
 	}
 }
 
-func (c *Conversation) NextConvoRequest(round uint32) *vuvuzela.ConvoRequest {
+func (c *Conversation) NextMessage(round uint32) *mixnet.MixMessage {
 	c.Lock()
 	c.lastRound = round
 	c.Unlock()
@@ -118,33 +116,25 @@ func (c *Conversation) NextConvoRequest(round uint32) *vuvuzela.ConvoRequest {
 	}
 	msgdata := msg.Marshal()
 
-	var encmsg [vuvuzela.SizeEncryptedMessage]byte
+	var encmsg [mixnet.SizeEncryptedMessageBody]byte
 	ctxt := c.Seal(msgdata[:], round)
 	copy(encmsg[:], ctxt)
 
-	exchange := &vuvuzela.ConvoExchange{
-		DeadDrop:         c.deadDrop(round),
-		EncryptedMessage: encmsg,
-	}
-
-	onion, sharedKeys := onionbox.Seal(exchange.Marshal(), vuvuzela.ForwardNonce(round), c.pki.ServerKeys().Keys())
-
 	pr := &pendingRound{
-		onionSharedKeys: sharedKeys,
-		sentMessage:     encmsg,
+		sentMessage: encmsg,
 	}
 	c.Lock()
 	c.pendingRounds[round] = pr
 	c.Unlock()
 
-	return &vuvuzela.ConvoRequest{
-		Round: round,
-		Onion: onion,
+	return &mixnet.MixMessage{
+		DeadDrop:         c.deadDrop(round),
+		EncryptedMessage: encmsg,
 	}
 }
 
-func (c *Conversation) HandleConvoResponse(r *vuvuzela.ConvoResponse) {
-	rlog := log.WithFields(log.Fields{"round": r.Round})
+func (c *Conversation) Reply(round uint32, encmsg []byte) {
+	rlog := log.WithFields(log.Fields{"round": round})
 
 	var responding bool
 	defer func() {
@@ -155,17 +145,11 @@ func (c *Conversation) HandleConvoResponse(r *vuvuzela.ConvoResponse) {
 	}()
 
 	c.Lock()
-	pr, ok := c.pendingRounds[r.Round]
-	delete(c.pendingRounds, r.Round)
+	pr, ok := c.pendingRounds[round]
+	delete(c.pendingRounds, round)
 	c.Unlock()
 	if !ok {
 		rlog.Error("round not found")
-		return
-	}
-
-	encmsg, ok := onionbox.Open(r.Onion, vuvuzela.BackwardNonce(r.Round), pr.onionSharedKeys)
-	if !ok {
-		rlog.Error("decrypting onion failed")
 		return
 	}
 
@@ -173,7 +157,7 @@ func (c *Conversation) HandleConvoResponse(r *vuvuzela.ConvoResponse) {
 		return
 	}
 
-	msgdata, ok := c.Open(encmsg, r.Round)
+	msgdata, ok := c.Open(encmsg, round)
 	if !ok {
 		rlog.Error("decrypting peer message failed")
 		return
@@ -239,7 +223,7 @@ func (c *Conversation) Open(ctxt []byte, round uint32) ([]byte, bool) {
 	return secretbox.Open(nil, ctxt, &nonce, c.secretKey)
 }
 
-func (c *Conversation) deadDrop(round uint32) (id vuvuzela.DeadDrop) {
+func (c *Conversation) deadDrop(round uint32) (id mixnet.DeadDrop) {
 	h := hmac.New(sha256.New, c.secretKey[:])
 	h.Write([]byte("DeadDrop"))
 	binary.Write(h, binary.BigEndian, round)

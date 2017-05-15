@@ -15,12 +15,10 @@ import (
 	"github.com/davidlazar/gocui"
 
 	"vuvuzela.io/alpenhorn"
-	"vuvuzela.io/vuvuzela"
 	"vuvuzela.io/vuvuzela/internal"
 )
 
 type GuiClient struct {
-	pki    *vuvuzela.PKI
 	myName string
 
 	gui             *gocui.Gui
@@ -40,7 +38,6 @@ func (gc *GuiClient) switchConversation(peer string, key *[32]byte) {
 	convo, ok := gc.conversations[peer]
 	if !ok {
 		convo = &Conversation{
-			pki:          gc.pki,
 			myUsername:   gc.myName,
 			peerUsername: peer,
 			gui:          gc,

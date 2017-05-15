@@ -1,4 +1,4 @@
-package vuvuzela
+package mixnet
 
 import (
 	"crypto/rand"
