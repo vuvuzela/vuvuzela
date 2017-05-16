@@ -12,6 +12,7 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/davidlazar/go-crypto/encoding/base32"
 	"github.com/davidlazar/gocui"
 
 	"vuvuzela.io/alpenhorn"
@@ -72,25 +73,61 @@ var commands = map[string]func(*GuiClient, []string) error{
 	},
 
 	"list": func(gc *GuiClient, _ []string) error {
-		friends := gc.alpenhornClient.GetFriends()
-		if len(friends) > 0 {
-			mv, err := gc.gui.View("main")
-			if err != nil {
-				return err
-			}
+		mv, err := gc.gui.View("main")
+		if err != nil {
+			return err
+		}
 
-			fmt.Fprintf(mv, "--- Friend List ---\n")
+		fmt.Fprintf(mv, " ┌─────────\n")
+
+		inReqs := gc.alpenhornClient.GetIncomingFriendRequests()
+		if len(inReqs) > 0 {
+			fmt.Fprintf(mv, " │ Incoming Friend Requests\n")
+			tw := tabwriter.NewWriter(mv, 0, 0, 1, ' ', 0)
+			for _, req := range inReqs {
+				key := base32.EncodeToString(req.LongTermKey)
+				fmt.Fprintf(tw, " │    %s\t{%s}\n", req.Username, key)
+			}
+			tw.Flush()
+			fmt.Fprintf(mv, " ├─────────\n")
+			gc.gui.Flush()
+		}
+
+		outReqs := gc.alpenhornClient.GetOutgoingFriendRequests()
+		if len(outReqs) > 0 {
+			fmt.Fprintf(mv, " │ Outgoing Friend Requests\n")
+			tw := tabwriter.NewWriter(mv, 0, 0, 1, ' ', 0)
+			for _, req := range outReqs {
+				confirm := ""
+				if req.Confirmation {
+					confirm = "(confirmation)"
+				}
+				key := "(no key specified)"
+				if req.ExpectedKey != nil {
+					key = "{" + base32.EncodeToString(req.ExpectedKey) + "}"
+				}
+				fmt.Fprintf(tw, " │    %s\t%s\t%s\n", req.Username, key, confirm)
+			}
+			tw.Flush()
+			fmt.Fprintf(mv, " ├─────────\n")
+			gc.gui.Flush()
+		}
+
+		friends := gc.alpenhornClient.GetFriends()
+		fmt.Fprintf(mv, " │ Friends\n")
+		if len(friends) == 0 {
+			fmt.Fprintf(mv, " │    no friends; use /addfriend to add a friend\n")
+		} else {
 			tw := tabwriter.NewWriter(mv, 0, 0, 1, ' ', 0)
 			for i, friend := range friends {
 				keyRound, key := friend.UnsafeKeywheelState()
 				keyStr := base64.RawURLEncoding.EncodeToString(key[:])[:12]
-				fmt.Fprintf(tw, "%d.\t%s\t{%d|%s...}\n", i, friend.Username, keyRound, keyStr)
+				fmt.Fprintf(tw, " │    %d.\t%s\t{%d|%s...}\n", i, friend.Username, keyRound, keyStr)
 			}
 			tw.Flush()
-			gc.gui.Flush()
-		} else {
-			gc.Warnf("No friends in your address book.\n")
 		}
+		fmt.Fprintf(mv, " └─────────\n")
+		gc.gui.Flush()
 
 		return nil
 	},
