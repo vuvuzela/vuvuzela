@@ -18,7 +18,7 @@ func (gc *GuiClient) SentFriendRequest(r *alpenhorn.OutgoingFriendRequest) {
 
 func (gc *GuiClient) ReceivedFriendRequest(r *alpenhorn.IncomingFriendRequest) {
 	gc.Warnf("Received friend request: %s\n", r.Username)
-	r.Approve()
+	gc.Warnf("Type `/approve %s` to approve the friend request.\n", r.Username)
 }
 
 func (gc *GuiClient) UnexpectedSigningKey(in *alpenhorn.IncomingFriendRequest, out *alpenhorn.OutgoingFriendRequest) {

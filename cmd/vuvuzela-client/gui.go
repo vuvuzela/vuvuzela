@@ -178,6 +178,28 @@ var commands = map[string]func(*GuiClient, []string) error{
 		}
 		return nil
 	},
+
+	"approve": func(gc *GuiClient, args []string) error {
+		if len(args) != 1 {
+			gc.Warnf("Missing username\n")
+			return nil
+		}
+		username := args[0]
+		reqs := gc.alpenhornClient.GetIncomingFriendRequests()
+		for _, req := range reqs {
+			if req.Username == username {
+				_, err := req.Approve()
+				if err != nil {
+					gc.Warnf("error approving friend request: %s\n", err)
+					return nil
+				}
+				gc.Warnf("Approved friend request: %s\n", username)
+				return nil
+			}
+		}
+		gc.Warnf("No friend request from %s\n", username)
+		return nil
+	},
 }
 
 func (gc *GuiClient) handleLine(line string) error {
