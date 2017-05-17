@@ -99,7 +99,8 @@ func (c *Conversation) NextMessage(round uint32) *convo.DeadDropMessage {
 	c.Lock()
 	c.lastRound = round
 	c.Unlock()
-	go c.gui.Flush()
+	// update the round number in the status bar
+	go c.gui.redraw()
 
 	var body interface{}
 
@@ -141,7 +142,7 @@ func (c *Conversation) Reply(round uint32, encmsg []byte) {
 		c.Lock()
 		c.lastPeerResponding = responding
 		c.Unlock()
-		c.gui.Flush()
+		c.gui.redraw()
 	}()
 
 	c.Lock()
