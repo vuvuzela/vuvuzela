@@ -11,9 +11,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/davidlazar/go-crypto/encoding/base32"
 	"github.com/davidlazar/gocui"
+	log "github.com/sirupsen/logrus"
 
 	"vuvuzela.io/alpenhorn"
 	"vuvuzela.io/vuvuzela/internal"

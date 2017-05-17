@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 
 	"vuvuzela.io/alpenhorn/errors"
 	"vuvuzela.io/alpenhorn/typesocket"

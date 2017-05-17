@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	"gopkg.in/gizak/termui.v1"
 
 	"vuvuzela.io/vuvuzela/mixnet"

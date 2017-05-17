@@ -13,7 +13,7 @@ import (
 	"runtime"
 	"text/template"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/ed25519"
 
 	"vuvuzela.io/alpenhorn/config"
