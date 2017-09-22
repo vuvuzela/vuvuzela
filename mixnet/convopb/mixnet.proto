@@ -1,0 +1,84 @@
+syntax = "proto3";
+
+// We can't name this mixnetpb because it conflicts with
+// Alpenhorn's mixnetpb package.
+package convopb;
+
+import "github.com/gogo/protobuf/gogoproto/gogo.proto";
+
+service Mixnet {
+	rpc NewRound(NewRoundRequest) returns (NewRoundResponse) {}
+	rpc SetRoundSettings(SetRoundSettingsRequest) returns (RoundSettingsSignature) {}
+
+	rpc SetNumIncoming(SetNumIncomingRequest) returns (Nothing) {}
+	rpc AddOnions(AddOnionsRequest) returns (Nothing) {}
+	rpc CloseRound(CloseRoundRequest) returns (Nothing) {}
+
+	rpc GetOnions(GetOnionsRequest) returns (GetOnionsResponse) {}
+	rpc DeleteRound(DeleteRoundRequest) returns (Nothing) {}
+}
+
+message Nothing {}
+
+message NewRoundRequest {
+	string service = 1;
+	uint32 round = 2;
+	repeated PublicServerConfig chain = 3;
+}
+
+message PublicServerConfig {
+	bytes key = 1;
+	string address = 2;
+}
+
+message NewRoundResponse {
+	bytes onion_key = 1;
+}
+
+message RoundSettings {
+	string service = 1;
+	uint32 round = 2;
+	repeated bytes onion_keys = 4;
+}
+
+message SetRoundSettingsRequest {
+	RoundSettings settings = 1;
+}
+
+message RoundSettingsSignature {
+	bytes signature = 1;
+}
+
+message SetNumIncomingRequest {
+	string service = 1;
+	uint32 round = 2;
+	uint32 numIncoming = 3;
+}
+
+message AddOnionsRequest {
+	string service = 1;
+	uint32 round = 2;
+	uint32 offset = 3;
+	repeated bytes onions = 4;
+}
+
+message CloseRoundRequest {
+	string service = 1;
+	uint32 round = 2;
+}
+
+message GetOnionsRequest {
+	string service = 1;
+	uint32 round = 2;
+	uint32 offset = 3;
+	uint32 count = 4;
+}
+
+message GetOnionsResponse {
+	repeated bytes onions = 1;
+}
+
+message DeleteRoundRequest {
+	string service = 1;
+	uint32 round = 2;
+}

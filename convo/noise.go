@@ -1,4 +1,8 @@
-package mixnet
+// Copyright 2015 David Lazar. All rights reserved.
+// Use of this source code is governed by the GNU AGPL
+// license that can be found in the LICENSE file.
+
+package convo
 
 import (
 	"vuvuzela.io/concurrency"
@@ -9,7 +13,7 @@ import (
 func FillWithFakeSingles(dest [][]byte, nonce *[24]byte, nextKeys []*[32]byte) {
 	concurrency.ParallelFor(len(dest), func(p *concurrency.P) {
 		for i, ok := p.Next(); ok; i, ok = p.Next() {
-			var msg [sizeMixMessage]byte
+			var msg [sizeDeadDropMessage]byte
 			rand.Read(msg[:])
 			onion, _ := onionbox.Seal(msg[:], nonce, nextKeys)
 			dest[i] = onion
@@ -20,8 +24,8 @@ func FillWithFakeSingles(dest [][]byte, nonce *[24]byte, nextKeys []*[32]byte) {
 func FillWithFakeDoubles(dest [][]byte, nonce *[24]byte, nextKeys []*[32]byte) {
 	concurrency.ParallelFor(len(dest)/2, func(p *concurrency.P) {
 		for i, ok := p.Next(); ok; i, ok = p.Next() {
-			var msg1 [sizeMixMessage]byte
-			var msg2 [sizeMixMessage]byte
+			var msg1 [sizeDeadDropMessage]byte
+			var msg2 [sizeDeadDropMessage]byte
 			rand.Read(msg1[:])
 			copy(msg2[0:16], msg1[0:16])
 			rand.Read(msg2[16:])

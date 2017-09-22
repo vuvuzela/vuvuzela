@@ -6,7 +6,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/gizak/termui.v1"
 
-	"vuvuzela.io/vuvuzela/mixnet"
+	"vuvuzela.io/vuvuzela/convo"
 )
 
 type Histogram struct {
@@ -76,7 +76,7 @@ func (h *Histogram) render() {
 	termui.Render(h.spSingles, h.spDoubles)
 }
 
-func (h *Histogram) run(accessCounts chan mixnet.AccessCount) {
+func (h *Histogram) run(accessCounts chan convo.AccessCount) {
 	h.singles = make([]int, 512)
 	h.doubles = make([]int, 512)
 	h.normalizedSingles = make([]int, 512)
