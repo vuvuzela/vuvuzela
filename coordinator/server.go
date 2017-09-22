@@ -6,34 +6,35 @@
 package coordinator
 
 import (
-	"encoding/binary"
 	"fmt"
-	"io/ioutil"
 	"net/http"
-	"os"
+	"strings"
 	"sync"
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/crypto/ed25519"
+	"golang.org/x/net/context"
 
+	"vuvuzela.io/alpenhorn/config"
 	"vuvuzela.io/alpenhorn/errors"
 	"vuvuzela.io/alpenhorn/typesocket"
-	"vuvuzela.io/alpenhorn/vrpc"
 	"vuvuzela.io/concurrency"
-	"vuvuzela.io/internal/ioutil2"
+	"vuvuzela.io/vuvuzela/convo"
 	"vuvuzela.io/vuvuzela/mixnet"
 )
 
 // Server is the coordinator (entry) server for the
 // Vuvuzela conversation protocol.
 type Server struct {
-	MixServers   []*vrpc.Client
-	MixWait      time.Duration
-	NumMailboxes uint32
+	Service    string
+	PrivateKey ed25519.PrivateKey
 
+	MixWait   time.Duration
 	RoundWait time.Duration
 
-	PersistPath string
+	PersistPath             string
+	ConfigServerPersistPath string
 
 	mu             sync.Mutex
 	round          uint32
@@ -42,7 +43,10 @@ type Server struct {
 	shutdown       chan struct{}
 	latestMixRound *MixRound
 
-	hub *typesocket.Hub
+	hub          *typesocket.Hub
+	configServer *config.Server
+
+	mixnetClient *mixnet.Client
 }
 
 type onion struct {
@@ -64,14 +68,15 @@ func (srv *Server) Run() error {
 		Mux: mux,
 	}
 
-	round, err := loadPersistedState(srv.PersistPath)
-	if err != nil {
-		return err
+	srv.mixnetClient = &mixnet.Client{
+		Key: srv.PrivateKey,
 	}
-	srv.round = round + 1
+
+	srv.mu.Lock()
 	srv.onions = make([]onion, 0, 128)
 	srv.closed = false
 	srv.shutdown = make(chan struct{})
+	srv.mu.Unlock()
 
 	go srv.loop()
 	return nil
@@ -92,44 +97,26 @@ func (srv *Server) Close() error {
 	}
 }
 
-// version is the current version number of the persisted state format.
-const version byte = 0
-
-func loadPersistedState(path string) (round uint32, err error) {
-	data, err := ioutil.ReadFile(path)
-	if os.IsNotExist(err) {
-		return 0, persistState(path, 0)
-	} else if err != nil {
-		return 0, err
-	}
-
-	if len(data) < 5 {
-		return 0, fmt.Errorf("short data: want %d bytes, got %d", 5, len(data))
-	}
-
-	ver := data[0]
-	if ver != version {
-		return 0, fmt.Errorf("unexpected version: want version %d, got %d", version, ver)
-	}
-
-	round = binary.BigEndian.Uint32(data[1:])
-	return round, nil
-}
-
-func persistState(path string, round uint32) error {
-	var data [5]byte
-	data[0] = version
-	binary.BigEndian.PutUint32(data[1:], round)
-	return ioutil2.WriteFileAtomic(path, data[:], 0600)
-}
-
 func (srv *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	srv.hub.ServeHTTP(w, r)
+	switch {
+	case strings.HasPrefix(r.URL.Path, "/ws"):
+		srv.hub.ServeHTTP(w, r)
+	case strings.HasPrefix(r.URL.Path, "/config"):
+		r.URL.Path = strings.TrimPrefix(r.URL.Path, "/config")
+		srv.configServer.ServeHTTP(w, r)
+	default:
+		http.Error(w, "not found", http.StatusNotFound)
+	}
 }
 
 type OnionMsg struct {
 	Round uint32
 	Onion []byte
+}
+
+type NewRound struct {
+	Round      uint32
+	ConfigHash string
 }
 
 type MixRound struct {
@@ -178,25 +165,40 @@ func (srv *Server) incomingOnion(c typesocket.Conn, o OnionMsg) {
 }
 
 func (srv *Server) loop() {
-	round := srv.round
-
 	for {
+		currentConfig, configHash := srv.configServer.CurrentConfig()
+		mixServers := currentConfig.Inner.(*convo.ConvoConfig).MixServers
+
+		srv.mu.Lock()
+		srv.round++
+		round := srv.round
+
 		logger := log.WithFields(log.Fields{"round": round})
 
-		if err := persistState(srv.PersistPath, round); err != nil {
+		if err := srv.persistLocked(); err != nil {
 			logger.Errorf("error persisting state: %s", err)
+			srv.mu.Unlock()
 			break
 		}
+		srv.mu.Unlock()
 
-		logger.Info("starting new round")
+		logger.Info("Starting new round")
+
+		srv.hub.Broadcast("newround", NewRound{
+			Round:      round,
+			ConfigHash: configHash,
+		})
+
+		time.Sleep(500 * time.Millisecond)
 
 		// TODO perhaps pkg.NewRound, mixnet.NewRound, hub.Broadcast, etc
 		// should take a Context for better cancelation.
 
 		mixSettings := mixnet.RoundSettings{
-			Round: round,
+			Service: "Convo",
+			Round:   round,
 		}
-		mixSigs, err := mixnet.NewRound(srv.MixServers, &mixSettings)
+		mixSigs, err := srv.mixnetClient.NewRound(context.Background(), mixServers, &mixSettings)
 		if err != nil {
 			logger.WithFields(log.Fields{"call": "mixnet.NewRound"}).Error(err)
 			if !srv.sleep(10 * time.Second) {
@@ -215,29 +217,26 @@ func (srv *Server) loop() {
 		srv.latestMixRound = mixRound
 		srv.mu.Unlock()
 
-		logger.Info("announcing mixnet settings")
+		logger.Info("Announcing mixnet settings")
 		srv.hub.Broadcast("mix", mixRound)
 
 		if !srv.sleep(srv.MixWait) {
 			break
 		}
 
-		logger.Info("running round")
+		logger.Info("Running round")
 		srv.mu.Lock()
-		go srv.runRound(round, srv.onions)
-
-		round++
-		srv.round = round
+		go srv.runRound(context.Background(), mixServers[0], round, srv.onions)
 		srv.onions = make([]onion, 0, len(srv.onions))
 		srv.mu.Unlock()
 
-		logger.Info("waiting for next round")
+		logger.Info("Waiting for next round")
 		if !srv.sleep(srv.RoundWait) {
 			break
 		}
 	}
 
-	log.WithFields(log.Fields{"round": round}).Info("shutting down")
+	log.Info("Shutting down")
 }
 
 func (srv *Server) sleep(d time.Duration) bool {
@@ -251,7 +250,7 @@ func (srv *Server) sleep(d time.Duration) bool {
 	}
 }
 
-func (srv *Server) runRound(round uint32, out []onion) {
+func (srv *Server) runRound(ctx context.Context, firstServer mixnet.PublicServerConfig, round uint32, out []onion) {
 	onions := make([][]byte, len(out))
 	senders := make([]typesocket.Conn, len(out))
 	for i, o := range out {
@@ -263,7 +262,7 @@ func (srv *Server) runRound(round uint32, out []onion) {
 	logger.WithFields(log.Fields{"onions": len(onions)}).Info("start RunRound")
 	start := time.Now()
 
-	replies, err := mixnet.RunRound(srv.MixServers[0], round, onions)
+	replies, err := srv.mixnetClient.RunRound(ctx, firstServer, srv.Service, round, onions)
 	if err != nil {
 		logger.WithFields(log.Fields{"call": "RunRound"}).Error(err)
 		srv.hub.Broadcast("error", RoundError{Round: round, Err: "server error"})

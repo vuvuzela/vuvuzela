@@ -7,13 +7,15 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"os"
+	"os/user"
 	"path/filepath"
-	"runtime"
+	"strings"
 	"text/template"
 	"time"
 
@@ -21,22 +23,20 @@ import (
 	"golang.org/x/crypto/ed25519"
 
 	"vuvuzela.io/alpenhorn/config"
+	"vuvuzela.io/alpenhorn/edtls"
 	"vuvuzela.io/alpenhorn/encoding/toml"
-	"vuvuzela.io/alpenhorn/vrpc"
 	"vuvuzela.io/vuvuzela/coordinator"
 )
 
 var (
-	globalConfPath = flag.String("global", "", "global config file")
-	confPath       = flag.String("conf", "", "config file")
-	doinit         = flag.Bool("init", false, "create config file")
+	bootstrapPath = flag.String("bootstrapConfig", "", "path to bootstrap config")
+	doInit        = flag.Bool("init", false, "initialize a coordinator for the first time")
 )
 
 type Config struct {
 	PublicKey  ed25519.PublicKey
 	PrivateKey ed25519.PrivateKey
 	ListenAddr string
-	PersistDir string
 
 	RoundDelay time.Duration
 	MixWait    time.Duration
@@ -51,7 +51,6 @@ const confTemplate = `# Vuvuzela coordinator (entry) server config
 publicKey  = {{.PublicKey | base32 | printf "%q"}}
 privateKey = {{.PrivateKey | base32 | printf "%q"}}
 listenAddr = {{.ListenAddr | printf "%q"}}
-persistDir = {{.PersistDir | printf "%q" }}
 
 roundDelay = {{.RoundDelay | printf "%q"}}
 
@@ -60,7 +59,115 @@ roundDelay = {{.RoundDelay | printf "%q"}}
 mixWait = {{.MixWait | printf "%q"}}
 `
 
-func writeNewConfig() {
+type BootstrapConfig struct {
+	SignedConfigs SignedConfigs
+}
+
+type SignedConfigs struct {
+	Convo *config.SignedConfig
+}
+
+var bootstrapConfig *BootstrapConfig
+
+func getBootstrapConfig() *BootstrapConfig {
+	if bootstrapConfig != nil {
+		return bootstrapConfig
+	}
+
+	if *bootstrapPath == "" {
+		fmt.Println("Please specify a bootstrap config with -bootstrapConfig.")
+		os.Exit(1)
+	}
+
+	data, err := ioutil.ReadFile(*bootstrapPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Let the toml decoder know how to decode the inner configs.
+	bootstrapConfig = new(BootstrapConfig)
+	err = json.Unmarshal(data, bootstrapConfig)
+	if err != nil {
+		log.Fatalf("error decoding json from %s: %s", *bootstrapPath, err)
+	}
+
+	return bootstrapConfig
+}
+
+func initService(service string, confHome string) {
+	fmt.Printf("--> Initializing %q service.\n", service)
+	coordinatorPersistPath := filepath.Join(confHome, strings.ToLower(service)+"-coordinator-state")
+	configServerPersistPath := filepath.Join(confHome, strings.ToLower(service)+"-coordinator-configs")
+
+	doCoordinator := overwrite(coordinatorPersistPath)
+	doConfigServer := overwrite(configServerPersistPath)
+
+	if !doCoordinator && !doConfigServer {
+		fmt.Println("Nothing to do.")
+		return
+	}
+
+	if doConfigServer {
+		bootstrap := getBootstrapConfig()
+		var serviceConf *config.SignedConfig
+		switch service {
+		case "Convo":
+			serviceConf = bootstrap.SignedConfigs.Convo
+		default:
+			log.Fatalf("unknown service %q", service)
+		}
+		if err := serviceConf.Validate(); err != nil {
+			log.Fatalf("invalid signed config for service %q: %s", service, err)
+		}
+
+		err := config.CreateServerState(configServerPersistPath, serviceConf)
+		if err != nil {
+			log.Fatalf("failed to create config server state for service %q: %s", service, err)
+		}
+
+		fmt.Printf("! Wrote config server state: %s\n", configServerPersistPath)
+	}
+
+	if doCoordinator {
+		server := &coordinator.Server{
+			Service:                 service,
+			PersistPath:             coordinatorPersistPath,
+			ConfigServerPersistPath: configServerPersistPath,
+		}
+		err := server.Persist()
+		if err != nil {
+			log.Fatalf("failed to create coordinator server state for service %q: %s", service, err)
+		}
+
+		fmt.Printf("! Wrote coordinator server state: %s\n", coordinatorPersistPath)
+	}
+}
+
+func initCoordinator() {
+	u, err := user.Current()
+	if err != nil {
+		log.Fatal(err)
+	}
+	confHome := filepath.Join(u.HomeDir, ".vuvuzela")
+
+	err = os.Mkdir(confHome, 0700)
+	if err == nil {
+		fmt.Printf("Created directory %s\n", confHome)
+	} else if !os.IsExist(err) {
+		log.Fatal(err)
+	}
+
+	initService("Convo", confHome)
+
+	fmt.Printf("--> Generating coordinator key pair and config.\n")
+	confPath := filepath.Join(confHome, "coordinator.conf")
+	if overwrite(confPath) {
+		writeNewConfig(confPath)
+		fmt.Printf("--> Please edit the config file before running the server.\n")
+	}
+}
+
+func writeNewConfig(path string) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		panic(err)
@@ -70,7 +177,6 @@ func writeNewConfig() {
 		PublicKey:  publicKey,
 		PrivateKey: privateKey,
 		ListenAddr: "0.0.0.0:8000",
-		PersistDir: "/var/run/vuvuzela",
 
 		RoundDelay: 5 * time.Second,
 		MixWait:    2 * time.Second,
@@ -83,91 +189,95 @@ func writeNewConfig() {
 	if err != nil {
 		log.Fatalf("template error: %s", err)
 	}
-	data := buf.Bytes()
 
-	path := "coordinator-init.conf"
-	err = ioutil.WriteFile(path, data, 0600)
+	err = ioutil.WriteFile(path, buf.Bytes(), 0600)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("wrote %s\n", path)
+	fmt.Printf("! Wrote new config file: %s\n", path)
 }
 
 func main() {
 	flag.Parse()
 
-	if *doinit {
-		writeNewConfig()
+	if *doInit {
+		initCoordinator()
 		return
 	}
 
-	if *globalConfPath == "" {
-		fmt.Println("specify global config file with -global")
-		os.Exit(1)
-	}
-
-	if *confPath == "" {
-		fmt.Println("specify config file with -conf")
-		os.Exit(1)
-	}
-
-	globalConf, err := config.ReadGlobalConfigFile(*globalConfPath)
+	u, err := user.Current()
 	if err != nil {
 		log.Fatal(err)
 	}
-	vzConf, err := globalConf.VuvuzelaConfig()
-	if err != nil {
-		log.Fatalf("error reading vuvuzela config from %q: %s", *globalConfPath, err)
-	}
-	if len(vzConf.Mixers) == 0 {
-		log.Fatalf("no mix servers defined in global conf: %s", *globalConfPath)
-	}
+	confHome := filepath.Join(u.HomeDir, ".vuvuzela")
 
-	data, err := ioutil.ReadFile(*confPath)
+	confPath := filepath.Join(confHome, "coordinator.conf")
+	data, err := ioutil.ReadFile(confPath)
 	if err != nil {
 		log.Fatal(err)
 	}
 	conf := new(Config)
 	err = toml.Unmarshal(data, conf)
 	if err != nil {
-		log.Fatalf("error parsing config %q: %s", *confPath, err)
+		log.Fatalf("error parsing config %s: %s", confPath, err)
 	}
 
-	mixConns := make([]*vrpc.Client, len(vzConf.Mixers))
-	for i, mixer := range vzConf.Mixers {
-		if mixer.Key == nil || mixer.Address == "" {
-			log.Fatalf("mixer %d is missing a key or address", i+1)
-		}
-		numConns := 1
-		if i == 0 {
-			numConns = runtime.NumCPU()
-		}
+	coordinatorPresistPath := filepath.Join(confHome, "convo-coordinator-state")
+	configServerPersistPath := filepath.Join(confHome, "convo-coordinator-configs")
+	convoServer := &coordinator.Server{
+		Service:    "Convo",
+		PrivateKey: conf.PrivateKey,
 
-		log.Printf("connecting to mixer: %s", mixer.Address)
-		client, err := vrpc.Dial("tcp", mixer.Address, mixer.Key, conf.PrivateKey, numConns)
-		if err != nil {
-			log.Fatalf("vrpc.Dial: %s", err)
-		}
-		mixConns[i] = client
-	}
-
-	server := &coordinator.Server{
-		PersistPath: filepath.Join(conf.PersistDir, "vuvuzela-coordinator-state"),
-
-		MixServers: mixConns,
-		MixWait:    conf.MixWait,
-
+		MixWait:   conf.MixWait,
 		RoundWait: conf.RoundDelay,
+
+		PersistPath:             coordinatorPresistPath,
+		ConfigServerPersistPath: configServerPersistPath,
 	}
-	err = server.Run()
+	err = convoServer.LoadPersistedState()
+	if err != nil {
+		log.Fatalf("error loading persisted state: %s", err)
+	}
+
+	err = convoServer.Run()
 	if err != nil {
 		log.Fatalf("error starting convo loop: %s", err)
 	}
-	http.Handle("/ws", server)
 
-	log.Printf("listening on: %s", conf.ListenAddr)
-	err = http.ListenAndServe(conf.ListenAddr, nil)
+	http.Handle("/convo/", http.StripPrefix("/convo", convoServer))
+
+	listener, err := edtls.Listen("tcp", conf.ListenAddr, conf.PrivateKey)
+	if err != nil {
+		log.Fatalf("edtls listen: %s", err)
+	}
+
+	log.Infof("Listening on: %s", conf.ListenAddr)
+	err = http.Serve(listener, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func overwrite(path string) bool {
+	_, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return true
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("%s already exists.\n", path)
+	fmt.Printf("Overwrite (y/N)? ")
+	var yesno [3]byte
+	n, err := os.Stdin.Read(yesno[:])
+	if err != nil {
+		log.Fatal(err)
+	}
+	if n == 0 {
+		return false
+	}
+	if yesno[0] != 'y' && yesno[0] != 'Y' {
+		return false
+	}
+	return true
 }
