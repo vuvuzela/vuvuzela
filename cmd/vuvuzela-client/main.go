@@ -8,14 +8,12 @@ import (
 	"path/filepath"
 
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/crypto/ed25519"
 
 	"vuvuzela.io/alpenhorn"
-	"vuvuzela.io/alpenhorn/config"
+	"vuvuzela.io/vuvuzela"
 )
 
 var username = flag.String("username", "", "Alpenhorn username")
-var serverConfPath = flag.String("servers", "", "path to server config")
 
 func main() {
 	flag.Parse()
@@ -34,10 +32,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	alpStatePath := filepath.Join(confHome, fmt.Sprintf("%s.state", *username))
+	alpStatePath := filepath.Join(confHome, fmt.Sprintf("%s-alpenhorn-client-state", *username))
 	alpenhornClient, err := alpenhorn.LoadClient(alpStatePath)
 	if os.IsNotExist(err) {
-		fmt.Printf("No client state found for username %s in %s.\n", *username, confHome)
+		fmt.Printf("No Alpenhorn client state found for username %s in %s.\n", *username, confHome)
 		fmt.Printf("Use vuvuzela-keygen to generate new client state.\n")
 		os.Exit(1)
 	}
@@ -46,27 +44,19 @@ func main() {
 		return
 	}
 
-	keywheelPath := filepath.Join(confHome, fmt.Sprintf("%s.keywheel", *username))
+	keywheelPath := filepath.Join(confHome, fmt.Sprintf("%s-keywheel", *username))
 	alpenhornClient.KeywheelPersistPath = keywheelPath
 
-	// Reading the global config is a temporary kludge until we save
-	// Vuvuzela's connection settings in user state.
-	globalConf, err := config.ReadGlobalConfigFile(*serverConfPath)
+	vzStatePath := filepath.Join(confHome, fmt.Sprintf("%s-vuvuzela-client-state", *username))
+	vzClient, err := vuvuzela.LoadClient(vzStatePath)
+	if os.IsNotExist(err) {
+		fmt.Printf("No Vuvuzela client state found for username %s in %s.\n", *username, confHome)
+		fmt.Printf("Use vuvuzela-keygen to generate new client state.\n")
+		os.Exit(1)
+	}
 	if err != nil {
-		log.Fatal(err)
-	}
-	vzConf, err := globalConf.VuvuzelaConfig()
-	if err != nil {
-		log.Fatalf("error reading vuvuzela config from %q: %s", *serverConfPath, err)
-	}
-	mixers := make([]ed25519.PublicKey, len(vzConf.Mixers))
-	for i, mixer := range vzConf.Mixers {
-		mixers[i] = mixer.Key
-	}
-
-	vzClient := &Client{
-		EntryServer: vzConf.Coordinator.ClientAddress,
-		Mixers:      mixers,
+		log.Fatalf("Failed to load vuvuzela client: %s", err)
+		return
 	}
 
 	gc := &GuiClient{

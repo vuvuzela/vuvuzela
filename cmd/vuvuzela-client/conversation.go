@@ -13,7 +13,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/nacl/secretbox"
 
-	"vuvuzela.io/vuvuzela/mixnet"
+	"vuvuzela.io/vuvuzela/convo"
 )
 
 type Conversation struct {
@@ -43,7 +43,7 @@ func (c *Conversation) Init() {
 
 type pendingRound struct {
 	onionSharedKeys []*[32]byte
-	sentMessage     [mixnet.SizeEncryptedMessageBody]byte
+	sentMessage     [convo.SizeEncryptedMessageBody]byte
 }
 
 type ConvoMessage struct {
@@ -59,7 +59,7 @@ type TimestampMessage struct {
 	Timestamp time.Time
 }
 
-func (cm *ConvoMessage) Marshal() (msg [mixnet.SizeMessageBody]byte) {
+func (cm *ConvoMessage) Marshal() (msg [convo.SizeMessageBody]byte) {
 	switch v := cm.Body.(type) {
 	case *TimestampMessage:
 		msg[0] = 0
@@ -95,7 +95,7 @@ func (c *Conversation) QueueTextMessage(msg []byte) bool {
 	}
 }
 
-func (c *Conversation) NextMessage(round uint32) *mixnet.MixMessage {
+func (c *Conversation) NextMessage(round uint32) *convo.DeadDropMessage {
 	c.Lock()
 	c.lastRound = round
 	c.Unlock()
@@ -116,7 +116,7 @@ func (c *Conversation) NextMessage(round uint32) *mixnet.MixMessage {
 	}
 	msgdata := msg.Marshal()
 
-	var encmsg [mixnet.SizeEncryptedMessageBody]byte
+	var encmsg [convo.SizeEncryptedMessageBody]byte
 	ctxt := c.Seal(msgdata[:], round)
 	copy(encmsg[:], ctxt)
 
@@ -127,7 +127,7 @@ func (c *Conversation) NextMessage(round uint32) *mixnet.MixMessage {
 	c.pendingRounds[round] = pr
 	c.Unlock()
 
-	return &mixnet.MixMessage{
+	return &convo.DeadDropMessage{
 		DeadDrop:         c.deadDrop(round),
 		EncryptedMessage: encmsg,
 	}
@@ -223,7 +223,7 @@ func (c *Conversation) Open(ctxt []byte, round uint32) ([]byte, bool) {
 	return secretbox.Open(nil, ctxt, &nonce, c.secretKey)
 }
 
-func (c *Conversation) deadDrop(round uint32) (id mixnet.DeadDrop) {
+func (c *Conversation) deadDrop(round uint32) (id convo.DeadDrop) {
 	h := hmac.New(sha256.New, c.secretKey[:])
 	h.Write([]byte("DeadDrop"))
 	binary.Write(h, binary.BigEndian, round)

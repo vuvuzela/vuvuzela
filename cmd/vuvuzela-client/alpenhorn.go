@@ -2,6 +2,7 @@ package main
 
 import (
 	"vuvuzela.io/alpenhorn"
+	"vuvuzela.io/alpenhorn/config"
 )
 
 func (gc *GuiClient) Error(err error) {
@@ -33,4 +34,11 @@ func (gc *GuiClient) SentCall(call *alpenhorn.OutgoingCall) {
 func (gc *GuiClient) ReceivedCall(call *alpenhorn.IncomingCall) {
 	gc.Warnf("Received call: %s\n", call.Username)
 	gc.switchConversation(call.Username, call.SessionKey)
+}
+
+func (gc *GuiClient) NewConfig(chain []*config.SignedConfig) {
+	// TODO we should let the user know the differences between versions
+	prev := chain[len(chain)-1]
+	next := chain[0]
+	gc.Warnf("New %q config: %s -> %s\n", prev.Service, prev.Hash(), next.Hash())
 }

@@ -16,6 +16,7 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"vuvuzela.io/alpenhorn"
+	"vuvuzela.io/vuvuzela"
 	"vuvuzela.io/vuvuzela/internal"
 )
 
@@ -23,7 +24,7 @@ type GuiClient struct {
 	myName string
 
 	gui             *gocui.Gui
-	convoClient     *Client
+	convoClient     *vuvuzela.Client
 	alpenhornClient *alpenhorn.Client
 
 	mu            sync.Mutex
@@ -402,14 +403,15 @@ func quit(g *gocui.Gui, v *gocui.View) error {
 func (gc *GuiClient) Connect() {
 	if err := gc.alpenhornClient.Connect(); err != nil {
 		gc.Warnf("Failed to connect to alpenhorn service: %s\n", err)
+	} else {
+		gc.Warnf("Connected to alpenhorn service.\n")
 	}
-	gc.Warnf("Connected to alpenhorn service.\n")
 
 	if err := gc.convoClient.Connect(); err != nil {
 		gc.Warnf("Failed to connect to convo service: %s\n", err)
-		return
+	} else {
+		gc.Warnf("Connected to convo service.\n")
 	}
-	gc.Warnf("Connected to convo service.\n")
 }
 
 func (gc *GuiClient) Run() {
