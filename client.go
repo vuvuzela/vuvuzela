@@ -123,7 +123,7 @@ func (c *Client) newConvoRound(conn typesocket.Conn, v coordinator.NewRound) {
 	c.convoConfig = newConfig
 	c.convoConfigHash = v.ConfigHash
 
-	if err := c.Persist(); err != nil {
+	if err := c.persistLocked(); err != nil {
 		panic("failed to persist state: " + err.Error())
 	}
 
