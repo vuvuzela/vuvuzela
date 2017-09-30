@@ -30,11 +30,12 @@ type Server struct {
 	Service    string
 	PrivateKey ed25519.PrivateKey
 
+	ConfigClient *config.Client
+
 	MixWait   time.Duration
 	RoundWait time.Duration
 
-	PersistPath             string
-	ConfigServerPersistPath string
+	PersistPath string
 
 	mu             sync.Mutex
 	round          uint32
@@ -44,8 +45,6 @@ type Server struct {
 	latestMixRound *MixRound
 
 	hub          *typesocket.Hub
-	configServer *config.Server
-
 	mixnetClient *mixnet.Client
 }
 
@@ -101,9 +100,6 @@ func (srv *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasPrefix(r.URL.Path, "/ws"):
 		srv.hub.ServeHTTP(w, r)
-	case strings.HasPrefix(r.URL.Path, "/config"):
-		r.URL.Path = strings.TrimPrefix(r.URL.Path, "/config")
-		srv.configServer.ServeHTTP(w, r)
 	default:
 		http.Error(w, "not found", http.StatusNotFound)
 	}
@@ -166,7 +162,15 @@ func (srv *Server) incomingOnion(c typesocket.Conn, o OnionMsg) {
 
 func (srv *Server) loop() {
 	for {
-		currentConfig, configHash := srv.configServer.CurrentConfig()
+		currentConfig, err := srv.ConfigClient.CurrentConfig(srv.Service)
+		if err != nil {
+			log.Errorf("failed to fetch current config: %s", err)
+			if !srv.sleep(10 * time.Second) {
+				break
+			}
+			continue
+		}
+		configHash := currentConfig.Hash()
 		mixServers := currentConfig.Inner.(*convo.ConvoConfig).MixServers
 
 		srv.mu.Lock()

@@ -13,7 +13,6 @@ import (
 	"golang.org/x/crypto/ed25519"
 
 	"vuvuzela.io/alpenhorn/config"
-	"vuvuzela.io/alpenhorn/edhttp"
 	"vuvuzela.io/alpenhorn/errors"
 	"vuvuzela.io/alpenhorn/typesocket"
 	"vuvuzela.io/crypto/onionbox"
@@ -23,9 +22,9 @@ import (
 )
 
 type Client struct {
-	CoordinatorAddress string
-	CoordinatorKey     ed25519.PublicKey
-	PersistPath        string
+	PersistPath string
+
+	ConfigClient *config.Client
 
 	conn typesocket.Conn
 
@@ -65,8 +64,15 @@ func (c *Client) Connect() error {
 		c.rounds = make(map[uint32]*roundState)
 	}
 
-	wsAddr := fmt.Sprintf("wss://%s/convo/ws", c.CoordinatorAddress)
-	conn, err := typesocket.Dial(wsAddr, c.CoordinatorKey, c.convoMux())
+	// Fetch the current config to get the coordinator's key and address.
+	convoConfig, err := c.ConfigClient.CurrentConfig("Convo")
+	if err != nil {
+		return errors.Wrap(err, "fetching latest convo config")
+	}
+	convoInner := convoConfig.Inner.(*convo.ConvoConfig)
+
+	wsAddr := fmt.Sprintf("wss://%s/convo/ws", convoInner.Coordinator.Address)
+	conn, err := typesocket.Dial(wsAddr, convoInner.Coordinator.Key, c.convoMux())
 	if err != nil {
 		return err
 	}
@@ -109,11 +115,7 @@ func (c *Client) newConvoRound(conn typesocket.Conn, v coordinator.NewRound) {
 		return
 	}
 
-	configs, err := config.Client{
-		ConfigURL:  fmt.Sprintf("https://%s/convo/config", c.CoordinatorAddress),
-		ServerKey:  c.CoordinatorKey,
-		HTTPClient: &edhttp.Client{},
-	}.FetchAndVerifyConfig(c.convoConfig, v.ConfigHash)
+	configs, err := c.ConfigClient.FetchAndVerifyChain(c.convoConfig, v.ConfigHash)
 	if err != nil {
 		log.Errorf("%s", errors.Wrap(err, "fetching convo config"))
 		return

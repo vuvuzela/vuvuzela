@@ -12,15 +12,32 @@ import (
 	"vuvuzela.io/vuvuzela/mixnet"
 )
 
+// Use github.com/davidlazar/easyjson:
+//go:generate easyjson .
+
 func init() {
 	config.RegisterService("Convo", &ConvoConfig{})
 }
 
 type ConvoConfig struct {
-	MixServers []mixnet.PublicServerConfig
+	Coordinator CoordinatorConfig
+	MixServers  []mixnet.PublicServerConfig
+}
+
+//easyjson:readable
+type CoordinatorConfig struct {
+	Key     ed25519.PublicKey
+	Address string
 }
 
 func (c *ConvoConfig) Validate() error {
+	if len(c.Coordinator.Key) != ed25519.PublicKeySize {
+		return errors.New("invalid coordinator key: %#v", c.Coordinator.Key)
+	}
+	if c.Coordinator.Address == "" {
+		return errors.New("empty coordinator address")
+	}
+
 	if len(c.MixServers) == 0 {
 		return errors.New("no mix servers defined for convo protocol")
 	}

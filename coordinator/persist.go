@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io/ioutil"
 
-	"vuvuzela.io/alpenhorn/config"
 	"vuvuzela.io/internal/ioutil2"
 )
 
@@ -22,12 +21,6 @@ type persistedState struct {
 }
 
 func (srv *Server) LoadPersistedState() error {
-	configServer, err := config.LoadServer(srv.ConfigServerPersistPath)
-	if err != nil {
-		return err
-	}
-	srv.configServer = configServer
-
 	data, err := ioutil.ReadFile(srv.PersistPath)
 	if err != nil {
 		return err

@@ -6,10 +6,8 @@ package main
 
 import (
 	"crypto/rand"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/user"
@@ -23,32 +21,9 @@ import (
 	"vuvuzela.io/vuvuzela"
 )
 
-// Use github.com/davidlazar/easyjson:
-//go:generate easyjson .
-
 var (
-	username          = flag.String("username", "", "Alpenhorn username (e.g., your email address)")
-	bootstrapConfPath = flag.String("bootstrap", "", "path to bootstrap config")
+	username = flag.String("username", "", "Alpenhorn username (e.g., your email address)")
 )
-
-type BootstrapConfig struct {
-	Alpenhorn *CoordinatorInfo
-	Vuvuzela  *CoordinatorInfo
-
-	SignedConfigs SignedConfigs
-}
-
-type SignedConfigs struct {
-	AddFriend *config.SignedConfig
-	Dialing   *config.SignedConfig
-	Convo     *config.SignedConfig
-}
-
-//easyjson:readable
-type CoordinatorInfo struct {
-	CoordinatorKey     ed25519.PublicKey
-	CoordinatorAddress string
-}
 
 func init() {
 	log.SetFlags(0)
@@ -62,21 +37,6 @@ func main() {
 		fmt.Println("no username specified")
 		os.Exit(1)
 	}
-	if *bootstrapConfPath == "" {
-		fmt.Println("no bootstrap config specified")
-		os.Exit(1)
-	}
-
-	data, err := ioutil.ReadFile(*bootstrapConfPath)
-	if err != nil {
-		log.Fatal(err)
-	}
-	bootstrapConfig := new(BootstrapConfig)
-	err = json.Unmarshal(data, bootstrapConfig)
-	if err != nil {
-		log.Fatalf("error parsing config: %s", err)
-	}
-	bootstrapConfig.Validate()
 
 	u, err := user.Current()
 	if err != nil {
@@ -94,6 +54,15 @@ func main() {
 	clientDest := filepath.Join(confHome, clientStateBasename)
 	checkOverwrite(clientDest)
 
+	addFriendConfig, err := config.StdClient.CurrentConfig("AddFriend")
+	if err != nil {
+		log.Fatalf("error fetching latest addfriend config: %s", err)
+	}
+	dialingConfig, err := config.StdClient.CurrentConfig("Dialing")
+	if err != nil {
+		log.Fatalf("error fetching latest dialing config: %s", err)
+	}
+
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		panic(err)
@@ -107,14 +76,11 @@ func main() {
 		// For now, reuse the long term key for the PKG login key.
 		PKGLoginKey: privateKey,
 
-		CoordinatorAddress: bootstrapConfig.Alpenhorn.CoordinatorAddress,
-		CoordinatorKey:     bootstrapConfig.Alpenhorn.CoordinatorKey,
-
 		ClientPersistPath: clientDest,
 	}
 	err = client.Bootstrap(
-		bootstrapConfig.SignedConfigs.AddFriend,
-		bootstrapConfig.SignedConfigs.Dialing,
+		addFriendConfig,
+		dialingConfig,
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -124,10 +90,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("Wrote new Alpenhorn client to %s\n", clientDest)
+	fmt.Printf("Bootstrapped new Alpenhorn client using latest configs.\n")
+	fmt.Printf("! Cautious users should verify the initial configs in: %s\n", clientDest)
 
-	addFriendConfig := bootstrapConfig.SignedConfigs.AddFriend.Inner.(*config.AddFriendConfig)
-	for _, pkg := range addFriendConfig.PKGServers {
+	pkgServers := addFriendConfig.Inner.(*config.AddFriendConfig).PKGServers
+	for _, pkg := range pkgServers {
 		err := client.Register(*username, pkg.Address, pkg.Key)
 		if err != nil {
 			fmt.Printf("! Failed to register with %s: %s\n", pkg.Address, err)
@@ -139,12 +106,15 @@ func main() {
 	vzClientDest := filepath.Join(confHome, *username+"-vuvuzela-client-state")
 	checkOverwrite(vzClientDest)
 
-	vzClient := &vuvuzela.Client{
-		CoordinatorAddress: bootstrapConfig.Vuvuzela.CoordinatorAddress,
-		CoordinatorKey:     bootstrapConfig.Vuvuzela.CoordinatorKey,
-		PersistPath:        vzClientDest,
+	convoConfig, err := config.StdClient.CurrentConfig("Convo")
+	if err != nil {
+		log.Fatalf("error fetching latest convo config: %s", err)
 	}
-	err = vzClient.Bootstrap(bootstrapConfig.SignedConfigs.Convo)
+
+	vzClient := &vuvuzela.Client{
+		PersistPath: vzClientDest,
+	}
+	err = vzClient.Bootstrap(convoConfig)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -152,7 +122,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("Wrote new Vuvuzela client to %s\n", vzClientDest)
+	fmt.Printf("Bootstrapped new Vuvuzela client using latest configs.\n")
+	fmt.Printf("! Cautious users should verify the initial configs in: %s\n", vzClientDest)
 
 	fmt.Printf("* Username: %s\n", *username)
 	keyString := base32.EncodeToString(publicKey)
@@ -179,41 +150,5 @@ func checkOverwrite(path string) {
 	}
 	if yesno[0] != 'y' && yesno[0] != 'Y' {
 		os.Exit(1)
-	}
-}
-
-func (c *BootstrapConfig) Validate() {
-	if c.Alpenhorn == nil {
-		log.Fatalf("missing alpenhorn coordinator info in bootstrap config")
-	}
-	if len(c.Alpenhorn.CoordinatorKey) != ed25519.PublicKeySize {
-		log.Fatalf("invalid alpenhorn coordinator key: got %d bytes, want %d", len(c.Alpenhorn.CoordinatorKey), ed25519.PublicKeySize)
-	}
-
-	if c.Vuvuzela == nil {
-		log.Fatalf("missing vuvuzela coordinator info in bootstrap config")
-	}
-	if len(c.Vuvuzela.CoordinatorKey) != ed25519.PublicKeySize {
-		log.Fatalf("invalid vuvuzela coordinator key: got %d bytes, want %d", len(c.Vuvuzela.CoordinatorKey), ed25519.PublicKeySize)
-	}
-
-	if c.SignedConfigs.AddFriend == nil {
-		log.Fatal("missing addfriend signed config in bootstrap config")
-	}
-	if c.SignedConfigs.Dialing == nil {
-		log.Fatal("missing dialing signed config in bootstrap config")
-	}
-	if c.SignedConfigs.Convo == nil {
-		log.Fatal("missing convo signed config in bootstrap config")
-	}
-
-	if err := c.SignedConfigs.AddFriend.Validate(); err != nil {
-		log.Fatalf("invalid addfriend config: %s", err)
-	}
-	if err := c.SignedConfigs.Dialing.Validate(); err != nil {
-		log.Fatalf("invalid dialing config: %s", err)
-	}
-	if err := c.SignedConfigs.Convo.Validate(); err != nil {
-		log.Fatalf("invalid convo config: %s", err)
 	}
 }

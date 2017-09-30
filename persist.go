@@ -8,8 +8,6 @@ import (
 	"encoding/json"
 	"io/ioutil"
 
-	"golang.org/x/crypto/ed25519"
-
 	"vuvuzela.io/alpenhorn/config"
 	"vuvuzela.io/alpenhorn/errors"
 	"vuvuzela.io/internal/ioutil2"
@@ -17,17 +15,12 @@ import (
 )
 
 type persistedState struct {
-	CoordinatorAddress string
-	CoordinatorKey     ed25519.PublicKey
-
 	ConvoConfig *config.SignedConfig
 }
 
 func (c *Client) persistLocked() error {
 	st := &persistedState{
-		CoordinatorAddress: c.CoordinatorAddress,
-		CoordinatorKey:     c.CoordinatorKey,
-		ConvoConfig:        c.convoConfig,
+		ConvoConfig: c.convoConfig,
 	}
 
 	data, err := json.MarshalIndent(st, "", "  ")
@@ -60,8 +53,6 @@ func LoadClient(clientPersistPath string) (*Client, error) {
 }
 
 func (c *Client) loadStateLocked(st *persistedState) {
-	c.CoordinatorAddress = st.CoordinatorAddress
-	c.CoordinatorKey = st.CoordinatorKey
 	c.convoConfig = st.ConvoConfig
 	c.convoConfigHash = st.ConvoConfig.Hash()
 }

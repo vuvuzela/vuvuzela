@@ -10,6 +10,7 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"vuvuzela.io/alpenhorn"
+	"vuvuzela.io/alpenhorn/config"
 	"vuvuzela.io/vuvuzela"
 )
 
@@ -46,6 +47,7 @@ func main() {
 
 	keywheelPath := filepath.Join(confHome, fmt.Sprintf("%s-keywheel", *username))
 	alpenhornClient.KeywheelPersistPath = keywheelPath
+	alpenhornClient.ConfigClient = config.StdClient
 
 	vzStatePath := filepath.Join(confHome, fmt.Sprintf("%s-vuvuzela-client-state", *username))
 	vzClient, err := vuvuzela.LoadClient(vzStatePath)
@@ -58,6 +60,7 @@ func main() {
 		log.Fatalf("Failed to load vuvuzela client: %s", err)
 		return
 	}
+	vzClient.ConfigClient = config.StdClient
 
 	gc := &GuiClient{
 		myName:          alpenhornClient.Username,
