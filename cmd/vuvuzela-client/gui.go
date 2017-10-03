@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"vuvuzela.io/alpenhorn"
+	vzlog "vuvuzela.io/alpenhorn/log"
 	"vuvuzela.io/alpenhorn/pkg"
 	"vuvuzela.io/vuvuzela"
 	"vuvuzela.io/vuvuzela/internal"
@@ -333,7 +335,7 @@ func (gc *GuiClient) layout(g *gocui.Gui) error {
 		v.Autoscroll = true
 		v.Wrap = true
 		v.Frame = false
-		log.AddHook(gc)
+		log.AddHook(logrusHandler{gc})
 		log.SetOutput(ioutil.Discard)
 		log.SetFormatter(&internal.GuiFormatter{})
 	}
@@ -477,17 +479,21 @@ func (gc *GuiClient) Run() {
 	}
 }
 
-func (gc *GuiClient) Fire(entry *log.Entry) error {
+type logrusHandler struct {
+	gc *GuiClient
+}
+
+func (h logrusHandler) Fire(entry *log.Entry) error {
 	line, err := entry.String()
 	if err != nil {
 		return err
 	}
 
-	gc.Warnf(line)
+	h.gc.Warnf(line)
 	return nil
 }
 
-func (gc *GuiClient) Levels() []log.Level {
+func (h logrusHandler) Levels() []log.Level {
 	return []log.Level{
 		log.PanicLevel,
 		log.FatalLevel,
@@ -496,6 +502,16 @@ func (gc *GuiClient) Levels() []log.Level {
 		log.InfoLevel,
 		log.DebugLevel,
 	}
+}
+
+func (gc *GuiClient) Fire(e *vzlog.Entry) {
+	buf := new(bytes.Buffer)
+	buf.WriteString(e.Time.Format("15:04:05"))
+	fmt.Fprintf(buf, " %s %-44s ", e.Level.Icon(), e.Message)
+	vzlog.Logfmt(buf, e.Fields)
+	buf.WriteByte('\n')
+
+	gc.Warnf("%s", buf.Bytes())
 }
 
 func vuvuzelaEditor(v *gocui.View, key gocui.Key, ch rune, mod gocui.Modifier) {

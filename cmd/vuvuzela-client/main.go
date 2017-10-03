@@ -11,6 +11,7 @@ import (
 
 	"vuvuzela.io/alpenhorn"
 	"vuvuzela.io/alpenhorn/config"
+	vzlog "vuvuzela.io/alpenhorn/log"
 	"vuvuzela.io/vuvuzela"
 )
 
@@ -68,6 +69,7 @@ func main() {
 		alpenhornClient: alpenhornClient,
 	}
 	alpenhornClient.Handler = gc
+	vzlog.StdLogger.EntryHandler = gc
 
 	gc.Run()
 }
