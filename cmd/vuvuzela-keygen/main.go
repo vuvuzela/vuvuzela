@@ -93,16 +93,6 @@ func main() {
 	fmt.Printf("Bootstrapped new Alpenhorn client using latest configs.\n")
 	fmt.Printf("! Cautious users should verify the initial configs in: %s\n", clientDest)
 
-	pkgServers := addFriendConfig.Inner.(*config.AddFriendConfig).PKGServers
-	for _, pkg := range pkgServers {
-		err := client.Register(*username, pkg.Address, pkg.Key)
-		if err != nil {
-			fmt.Printf("! Failed to register with %s: %s\n", pkg.Address, err)
-			continue
-		}
-		fmt.Printf("Registered with %s\n", pkg.Address)
-	}
-
 	vzClientDest := filepath.Join(confHome, *username+"-vuvuzela-client-state")
 	checkOverwrite(vzClientDest)
 

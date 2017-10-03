@@ -16,6 +16,7 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"vuvuzela.io/alpenhorn"
+	"vuvuzela.io/alpenhorn/pkg"
 	"vuvuzela.io/vuvuzela"
 	"vuvuzela.io/vuvuzela/internal"
 )
@@ -401,6 +402,8 @@ func quit(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (gc *GuiClient) Connect() {
+	gc.Register()
+
 	if err := gc.alpenhornClient.Connect(); err != nil {
 		gc.Warnf("Failed to connect to alpenhorn service: %s\n", err)
 	} else {
@@ -411,6 +414,27 @@ func (gc *GuiClient) Connect() {
 		gc.Warnf("Failed to connect to convo service: %s\n", err)
 	} else {
 		gc.Warnf("Connected to convo service.\n")
+	}
+}
+
+func (gc *GuiClient) Register() {
+	stats := gc.alpenhornClient.PKGStatus()
+	for _, st := range stats {
+		if st.Error == nil {
+			continue
+		}
+
+		pkgErr, ok := st.Error.(pkg.Error)
+		if ok && pkgErr.Code == pkg.ErrNotRegistered {
+			err := gc.alpenhornClient.Register(st.Server)
+			if err != nil {
+				gc.Warnf("Failed to register with PKG %s: %s\n", st.Server.Address, err)
+				continue
+			}
+			gc.Warnf("Registered %q with PKG %s\n", gc.alpenhornClient.Username, st.Server.Address)
+		} else {
+			gc.Warnf("Failed to check account status with PKG %s: %s\n", st.Server.Address, st.Error)
+		}
 	}
 }
 
