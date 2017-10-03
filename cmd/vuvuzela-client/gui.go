@@ -134,7 +134,7 @@ var commands = map[string]func(*GuiClient, []string) error{
 	},
 
 	"call": func(gc *GuiClient, args []string) error {
-		if len(args) != 1 {
+		if len(args) == 0 {
 			gc.Warnf("Missing username\n")
 			return nil
 		}
@@ -152,7 +152,7 @@ var commands = map[string]func(*GuiClient, []string) error{
 	},
 
 	"addfriend": func(gc *GuiClient, args []string) error {
-		if len(args) != 1 {
+		if len(args) == 0 {
 			gc.Warnf("Missing username\n")
 			return nil
 		}
@@ -164,7 +164,7 @@ var commands = map[string]func(*GuiClient, []string) error{
 	},
 
 	"delfriend": func(gc *GuiClient, args []string) error {
-		if len(args) != 1 {
+		if len(args) == 0 {
 			gc.Warnf("Missing username\n")
 			return nil
 		}
@@ -181,7 +181,7 @@ var commands = map[string]func(*GuiClient, []string) error{
 	},
 
 	"approve": func(gc *GuiClient, args []string) error {
-		if len(args) != 1 {
+		if len(args) == 0 {
 			gc.Warnf("Missing username\n")
 			return nil
 		}
