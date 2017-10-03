@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
-	"io/ioutil"
 	"sort"
 	"strings"
 	"sync"
@@ -14,13 +13,11 @@ import (
 
 	"github.com/davidlazar/go-crypto/encoding/base32"
 	"github.com/jroimartin/gocui"
-	log "github.com/sirupsen/logrus"
 
 	"vuvuzela.io/alpenhorn"
-	vzlog "vuvuzela.io/alpenhorn/log"
+	"vuvuzela.io/alpenhorn/log"
 	"vuvuzela.io/alpenhorn/pkg"
 	"vuvuzela.io/vuvuzela"
-	"vuvuzela.io/vuvuzela/internal"
 )
 
 type GuiClient struct {
@@ -338,9 +335,6 @@ func (gc *GuiClient) layout(g *gocui.Gui) error {
 		v.Autoscroll = true
 		v.Wrap = true
 		v.Frame = false
-		log.AddHook(logrusHandler{gc})
-		log.SetOutput(ioutil.Discard)
-		log.SetFormatter(&internal.GuiFormatter{})
 	}
 	sv, err := g.SetView("status", -1, maxY-3, maxX, maxY-1)
 	if err != nil {
@@ -447,7 +441,7 @@ func (gc *GuiClient) Register() {
 func (gc *GuiClient) Run() {
 	gui, err := gocui.NewGui(gocui.OutputNormal)
 	if err != nil {
-		log.Panicln(err)
+		panic(err)
 	}
 	defer gui.Close()
 	gc.gui = gui
@@ -455,13 +449,13 @@ func (gc *GuiClient) Run() {
 	gui.SetManagerFunc(gc.layout)
 
 	if err := gui.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
-		log.Panicln(err)
+		panic(err)
 	}
 	if err := gui.SetKeybinding("input", gocui.KeyEnter, gocui.ModNone, gc.readLine); err != nil {
-		log.Panicln(err)
+		panic(err)
 	}
 	if err := gui.SetKeybinding("input", gocui.KeyTab, gocui.ModNone, gc.tabComplete); err != nil {
-		log.Panicln(err)
+		panic(err)
 	}
 	gui.Cursor = true
 	gui.BgColor = gocui.ColorDefault
@@ -479,40 +473,15 @@ func (gc *GuiClient) Run() {
 
 	err = gui.MainLoop()
 	if err != nil && err != gocui.ErrQuit {
-		log.Panicln(err)
+		panic(err)
 	}
 }
 
-type logrusHandler struct {
-	gc *GuiClient
-}
-
-func (h logrusHandler) Fire(entry *log.Entry) error {
-	line, err := entry.String()
-	if err != nil {
-		return err
-	}
-
-	h.gc.Warnf(line)
-	return nil
-}
-
-func (h logrusHandler) Levels() []log.Level {
-	return []log.Level{
-		log.PanicLevel,
-		log.FatalLevel,
-		log.ErrorLevel,
-		log.WarnLevel,
-		log.InfoLevel,
-		log.DebugLevel,
-	}
-}
-
-func (gc *GuiClient) Fire(e *vzlog.Entry) {
+func (gc *GuiClient) Fire(e *log.Entry) {
 	buf := new(bytes.Buffer)
 	buf.WriteString(e.Time.Format("15:04:05"))
 	fmt.Fprintf(buf, " %s %-44s ", e.Level.Icon(), e.Message)
-	vzlog.Logfmt(buf, e.Fields)
+	log.Logfmt(buf, e.Fields)
 	buf.WriteByte('\n')
 
 	gc.Warnf("%s", buf.Bytes())

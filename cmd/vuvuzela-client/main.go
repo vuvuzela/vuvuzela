@@ -7,11 +7,9 @@ import (
 	"os/user"
 	"path/filepath"
 
-	log "github.com/sirupsen/logrus"
-
 	"vuvuzela.io/alpenhorn"
 	"vuvuzela.io/alpenhorn/config"
-	vzlog "vuvuzela.io/alpenhorn/log"
+	"vuvuzela.io/alpenhorn/log"
 	"vuvuzela.io/vuvuzela"
 )
 
@@ -69,7 +67,7 @@ func main() {
 		alpenhornClient: alpenhornClient,
 	}
 	alpenhornClient.Handler = gc
-	vzlog.StdLogger.EntryHandler = gc
+	log.StdLogger.EntryHandler = gc
 
 	gc.Run()
 }

@@ -9,11 +9,11 @@ import (
 	"sync"
 
 	"github.com/davidlazar/go-crypto/encoding/base32"
-	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/ed25519"
 
 	"vuvuzela.io/alpenhorn/config"
 	"vuvuzela.io/alpenhorn/errors"
+	"vuvuzela.io/alpenhorn/log"
 	"vuvuzela.io/alpenhorn/typesocket"
 	"vuvuzela.io/crypto/onionbox"
 	"vuvuzela.io/vuvuzela/convo"

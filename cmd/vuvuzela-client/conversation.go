@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/nacl/secretbox"
 
+	"vuvuzela.io/alpenhorn/log"
 	"vuvuzela.io/vuvuzela/convo"
 )
 
