@@ -16,6 +16,7 @@ import (
 
 	"vuvuzela.io/alpenhorn"
 	"vuvuzela.io/alpenhorn/log"
+	"vuvuzela.io/alpenhorn/log/ansi"
 	"vuvuzela.io/alpenhorn/pkg"
 	"vuvuzela.io/vuvuzela"
 )
@@ -479,7 +480,13 @@ func (gc *GuiClient) Run() {
 
 func (gc *GuiClient) Fire(e *log.Entry) {
 	buf := new(bytes.Buffer)
-	buf.WriteString(e.Time.Format("15:04:05"))
+	color := e.Level.Color()
+	if e.Level == log.InfoLevel {
+		// Colorful timestamps on info messages is too distracting.
+		buf.WriteString(e.Time.Format("15:04:05"))
+	} else {
+		ansi.WriteString(buf, e.Time.Format("15:04:05"), color, ansi.Bold)
+	}
 	fmt.Fprintf(buf, " %s %-44s ", e.Level.Icon(), e.Message)
 	log.Logfmt(buf, e.Fields)
 	buf.WriteByte('\n')
