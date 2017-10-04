@@ -91,7 +91,7 @@ func (c *Client) convoMux() typesocket.Mux {
 }
 
 func (c *Client) convoRoundError(conn typesocket.Conn, v coordinator.RoundError) {
-	log.WithFields(log.Fields{"round": v.Round}).Errorf("round error: %s", v.Err)
+	log.WithFields(log.Fields{"round": v.Round}).Errorf("convo coordinator sent error: %s", v.Err)
 }
 
 func (c *Client) newConvoRound(conn typesocket.Conn, v coordinator.NewRound) {
