@@ -3,10 +3,11 @@ package main
 import (
 	"vuvuzela.io/alpenhorn"
 	"vuvuzela.io/alpenhorn/config"
+	"vuvuzela.io/alpenhorn/log"
 )
 
 func (gc *GuiClient) Error(err error) {
-	gc.Warnf("error: %s\n", err)
+	log.Error(err)
 }
 
 func (gc *GuiClient) ConfirmedFriend(f *alpenhorn.Friend) {
