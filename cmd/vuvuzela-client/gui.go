@@ -80,23 +80,20 @@ var commands = map[string]func(*GuiClient, []string) error{
 			return err
 		}
 
-		fmt.Fprintf(mv, " ┌─────────\n")
-
 		inReqs := gc.alpenhornClient.GetIncomingFriendRequests()
 		if len(inReqs) > 0 {
-			fmt.Fprintf(mv, " │ Incoming Friend Requests\n")
+			fmt.Fprintf(mv, "%s\n", ansi.Colorf("Incoming Friend Requests", ansi.Bold))
 			tw := tabwriter.NewWriter(mv, 0, 0, 1, ' ', 0)
 			for _, req := range inReqs {
 				key := base32.EncodeToString(req.LongTermKey)
-				fmt.Fprintf(tw, " │    %s\t{%s}\n", req.Username, key)
+				fmt.Fprintf(tw, "  %s\t{%s}\n", req.Username, key)
 			}
 			tw.Flush()
-			fmt.Fprintf(mv, " ├─────────\n")
 		}
 
 		outReqs := gc.alpenhornClient.GetOutgoingFriendRequests()
 		if len(outReqs) > 0 {
-			fmt.Fprintf(mv, " │ Outgoing Friend Requests\n")
+			fmt.Fprintf(mv, "%s\n", ansi.Colorf("Outgoing Friend Requests", ansi.Bold))
 			tw := tabwriter.NewWriter(mv, 0, 0, 1, ' ', 0)
 			for _, req := range outReqs {
 				confirm := ""
@@ -107,26 +104,25 @@ var commands = map[string]func(*GuiClient, []string) error{
 				if req.ExpectedKey != nil {
 					key = "{" + base32.EncodeToString(req.ExpectedKey) + "}"
 				}
-				fmt.Fprintf(tw, " │    %s\t%s\t%s\n", req.Username, key, confirm)
+				fmt.Fprintf(tw, "  %s\t%s\t%s\n", req.Username, key, confirm)
 			}
 			tw.Flush()
-			fmt.Fprintf(mv, " ├─────────\n")
 		}
 
 		friends := gc.alpenhornClient.GetFriends()
-		fmt.Fprintf(mv, " │ Friends\n")
+		fmt.Fprintf(mv, "%s\n", ansi.Colorf("Friends", ansi.Bold))
 		if len(friends) == 0 {
-			fmt.Fprintf(mv, " │    no friends; use /addfriend to add a friend\n")
+			fmt.Fprintf(mv, "  No friends; use /addfriend to add a friend\n")
 		} else {
 			tw := tabwriter.NewWriter(mv, 0, 0, 1, ' ', 0)
-			for i, friend := range friends {
+			for _, friend := range friends {
 				keyRound, key := friend.UnsafeKeywheelState()
 				keyStr := base64.RawURLEncoding.EncodeToString(key[:])[:12]
-				fmt.Fprintf(tw, " │    %d.\t%s\t{%d|%s...}\n", i, friend.Username, keyRound, keyStr)
+				fmt.Fprintf(tw, "  %s\t{%d|%s...}\n", friend.Username, keyRound, keyStr)
 			}
 			tw.Flush()
 		}
-		fmt.Fprintf(mv, " └─────────\n")
+		fmt.Fprintf(mv, "\n")
 
 		return nil
 	},
