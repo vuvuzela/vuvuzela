@@ -18,6 +18,7 @@ import (
 
 	"vuvuzela.io/alpenhorn"
 	"vuvuzela.io/alpenhorn/config"
+	"vuvuzela.io/alpenhorn/pkg"
 	"vuvuzela.io/vuvuzela"
 )
 
@@ -35,6 +36,10 @@ func main() {
 
 	if *username == "" {
 		fmt.Println("no username specified")
+		os.Exit(1)
+	}
+	if err := pkg.ValidateUsername(*username); err != nil {
+		fmt.Printf("Invalid username: %s\n", err)
 		os.Exit(1)
 	}
 
