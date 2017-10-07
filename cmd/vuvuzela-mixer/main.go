@@ -10,7 +10,10 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
+	"runtime"
 	"text/template"
 
 	log "github.com/sirupsen/logrus"
@@ -33,6 +36,8 @@ var (
 
 type Config struct {
 	ListenAddr string
+	DebugAddr  string
+
 	PublicKey  ed25519.PublicKey
 	PrivateKey ed25519.PrivateKey
 
@@ -48,6 +53,7 @@ var funcMap = template.FuncMap{
 const confTemplate = `# Vuvuzela mixnet server config
 
 listenAddr = {{.ListenAddr | printf "%q"}}
+debugAddr = {{.DebugAddr | printf "%q" }}
 
 publicKey  = {{.PublicKey | base32 | printf "%q"}}
 privateKey = {{.PrivateKey | base32 | printf "%q"}}
@@ -67,6 +73,7 @@ func writeNewConfig() {
 
 	conf := &Config{
 		ListenAddr: "0.0.0.0:2718",
+		DebugAddr:  "0.0.0.0:6060",
 		PublicKey:  publicKey,
 		PrivateKey: privateKey,
 
@@ -136,6 +143,14 @@ func main() {
 			go histogram.run(mixServer.AccessCounts)
 		}
 	*/
+
+	if conf.DebugAddr != "" {
+		go func() {
+			log.Fatal(http.ListenAndServe(conf.DebugAddr, nil))
+		}()
+		runtime.SetBlockProfileRate(1)
+		runtime.SetMutexProfileFraction(1)
+	}
 
 	creds := credentials.NewTLS(edtls.NewTLSServerConfig(conf.PrivateKey))
 	grpcServer := grpc.NewServer(grpc.Creds(creds))
