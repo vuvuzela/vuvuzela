@@ -11,7 +11,10 @@ import (
 	"testing"
 
 	"golang.org/x/crypto/ed25519"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
+	"vuvuzela.io/alpenhorn/errors"
 	"vuvuzela.io/alpenhorn/log"
 	"vuvuzela.io/crypto/onionbox"
 	"vuvuzela.io/vuvuzela/convo"
@@ -101,7 +104,6 @@ func makeConvoOnions(settings *mixnet.RoundSettings) (messages [][]byte, onions 
 	return
 }
 
-/*
 func TestAuth(t *testing.T) {
 	coordinatorPublic, _, _ := ed25519.GenerateKey(rand.Reader)
 	_, badPrivate, _ := ed25519.GenerateKey(rand.Reader)
@@ -112,10 +114,9 @@ func TestAuth(t *testing.T) {
 		Key: badPrivate,
 	}
 
-	_, err := badClient.NewRound(context.Background(), mixchain.Servers, "no-cdn", nil, &mixnet.RoundSettings{
-		Service:      "AddFriend",
-		Round:        42,
-		NumMailboxes: 1,
+	_, err := badClient.NewRound(context.Background(), mixchain.Servers, &mixnet.RoundSettings{
+		Service: "Convo",
+		Round:   42,
 	})
 	err = errors.Cause(err)
 	st, ok := status.FromError(err)
@@ -126,4 +127,3 @@ func TestAuth(t *testing.T) {
 		t.Fatalf("unexpected status: %s", st)
 	}
 }
-*/
