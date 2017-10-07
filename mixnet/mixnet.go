@@ -336,6 +336,8 @@ func (srv *Server) AddOnions(ctx context.Context, req *pb.AddOnionsRequest) (*pb
 	nonce := ForwardNonce(req.Round)
 	expectedOnionSize := (len(st.chain)-st.myPos)*onionbox.Overhead + service.SizeIncomingMessage()
 
+	messages := make([][]byte, len(req.Onions))
+	sharedKeys := make([]*[32]byte, len(req.Onions))
 	for i, onion := range req.Onions {
 		if len(onion) == expectedOnionSize {
 			var theirPublic [32]byte
@@ -346,20 +348,24 @@ func (srv *Server) AddOnions(ctx context.Context, req *pb.AddOnionsRequest) (*pb
 
 			message, ok := box.OpenAfterPrecomputation(nil, onion[32:], nonce, sharedKey)
 			if ok {
-				j := req.Offset + uint32(i)
-				st.mu.Lock()
-				if !st.closed {
-					st.incoming[j] = message
-					st.sharedKeys[j] = sharedKey
-					st.mu.Unlock()
-				} else {
-					st.mu.Unlock()
-					return nil, errors.New("round %d closed", req.Round)
-				}
+				messages[i] = message
+				sharedKeys[i] = sharedKey
 			} else {
 				log.WithFields(log.Fields{"rpc": "AddOnions", "round": req.Round}).Error("Decrypting onion failed")
 			}
 		}
+	}
+
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	if st.closed {
+		return nil, errors.New("round %d closed", req.Round)
+	}
+	for i := range messages {
+		j := req.Offset + uint32(i)
+		st.incoming[j] = messages[i]
+		st.sharedKeys[j] = sharedKeys[i]
 	}
 
 	return &pb.Nothing{}, nil
