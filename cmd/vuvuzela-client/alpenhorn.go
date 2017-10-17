@@ -11,35 +11,47 @@ func (gc *GuiClient) Error(err error) {
 }
 
 func (gc *GuiClient) ConfirmedFriend(f *alpenhorn.Friend) {
-	gc.Warnf("Confirmed friend: %s\n", f.Username)
+	gc.WarnfSync("Confirmed friend: %s\n", f.Username)
 }
 
 func (gc *GuiClient) SentFriendRequest(r *alpenhorn.OutgoingFriendRequest) {
-	gc.Warnf("Sent friend request: %s\n", r.Username)
+	gc.WarnfSync("Sent friend request: %s\n", r.Username)
 }
 
 func (gc *GuiClient) ReceivedFriendRequest(r *alpenhorn.IncomingFriendRequest) {
-	gc.Warnf("Received friend request: %s\n", r.Username)
-	gc.Warnf("Type `/approve %s` to approve the friend request.\n", r.Username)
+	gc.WarnfSync("Received friend request: %s\n", r.Username)
+	gc.WarnfSync("Type `/approve %s` to approve the friend request.\n", r.Username)
 }
 
 func (gc *GuiClient) UnexpectedSigningKey(in *alpenhorn.IncomingFriendRequest, out *alpenhorn.OutgoingFriendRequest) {
-	gc.Warnf("Unexpected signing key: %s\n", in.Username)
+	gc.WarnfSync("Unexpected signing key: %s\n", in.Username)
 }
 
 func (gc *GuiClient) SentCall(call *alpenhorn.OutgoingCall) {
-	gc.Warnf("Sent call: %s\n", call.Username)
-	gc.switchConversation(call.Username, call.SessionKey())
+	convo := gc.getOrCreateConvo(call.Username)
+	convo.WarnfSync("Sent call: %s\n", call.Username)
+	if !gc.activateConvo(convo, call.SessionKey()) {
+		convo.Lock()
+		convo.pendingCall = call
+		convo.Unlock()
+		convo.WarnfSync("Too many active conversations! Hang up another convo and type /answer to answer the call.\n")
+	}
 }
 
 func (gc *GuiClient) ReceivedCall(call *alpenhorn.IncomingCall) {
-	gc.Warnf("Received call: %s\n", call.Username)
-	gc.switchConversation(call.Username, call.SessionKey)
+	convo := gc.getOrCreateConvo(call.Username)
+	convo.WarnfSync("Received call: %s\n", call.Username)
+	if !gc.activateConvo(convo, call.SessionKey) {
+		convo.Lock()
+		convo.pendingCall = call
+		convo.Unlock()
+		convo.WarnfSync("Too many active conversations! Hang up another convo and type /answer to answer the call.\n")
+	}
 }
 
 func (gc *GuiClient) NewConfig(chain []*config.SignedConfig) {
 	// TODO we should let the user know the differences between versions
 	prev := chain[len(chain)-1]
 	next := chain[0]
-	gc.Warnf("New %q config: %s -> %s\n", prev.Service, prev.Hash(), next.Hash())
+	gc.WarnfSync("New %q config: %s -> %s\n", prev.Service, prev.Hash(), next.Hash())
 }

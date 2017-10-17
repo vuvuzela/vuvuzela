@@ -65,8 +65,11 @@ func main() {
 		myName:          alpenhornClient.Username,
 		convoClient:     vzClient,
 		alpenhornClient: alpenhornClient,
+		pendingRounds:   make(map[uint32]pendingRound),
+		active:          make(map[*Conversation]bool),
 	}
 	alpenhornClient.Handler = gc
+	vzClient.Handler = gc
 	log.StdLogger.EntryHandler = gc
 
 	gc.Run()

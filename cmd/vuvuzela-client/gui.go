@@ -19,7 +19,10 @@ import (
 	"vuvuzela.io/alpenhorn/log/ansi"
 	"vuvuzela.io/alpenhorn/pkg"
 	"vuvuzela.io/vuvuzela"
+	"vuvuzela.io/vuvuzela/convo"
 )
+
+const NumOutgoing = 5
 
 type GuiClient struct {
 	myName string
@@ -30,60 +33,163 @@ type GuiClient struct {
 
 	mu            sync.Mutex
 	selectedConvo *Conversation
-	conversations map[string]*Conversation
+	conversations []*Conversation
+	active        map[*Conversation]bool
+	pendingRounds map[uint32]pendingRound
+	mainUnread    bool
 }
 
-func (gc *GuiClient) switchConversation(peer string, key *[32]byte) {
+type pendingRound struct {
+	activeConvos []*Conversation
+}
+
+func (gc *GuiClient) Outgoing(round uint32) []*convo.DeadDropMessage {
+	out := make([]*convo.DeadDropMessage, 0, NumOutgoing)
+
 	gc.mu.Lock()
 	defer gc.mu.Unlock()
 
-	var convo *Conversation
-	convo, ok := gc.conversations[peer]
-	if !ok {
-		convo = &Conversation{
-			myUsername:   gc.myName,
-			peerUsername: peer,
-			gui:          gc,
-		}
-		convo.Init()
-		gc.conversations[peer] = convo
+	convos := make([]*Conversation, 0, len(gc.active))
+	for convo := range gc.active {
+		out = append(out, convo.NextMessage(round))
+		convos = append(convos, convo)
 	}
-	if key == nil {
-		key = new([32]byte)
-		rand.Read(key[:])
-	}
-	convo.secretKey = key
 
-	gc.selectedConvo = convo
-	gc.activateConvo(convo)
-	gc.Warnf("Now talking to %s\n", peer)
+	for len(out) < NumOutgoing {
+		msg := new(convo.DeadDropMessage)
+		rand.Read(msg.DeadDrop[:])
+		rand.Read(msg.EncryptedMessage[:])
+		out = append(out, msg)
+	}
+
+	gc.pendingRounds[round] = pendingRound{
+		activeConvos: convos,
+	}
+
+	return out
 }
 
-func (gc *GuiClient) activateConvo(convo *Conversation) {
-	if gc.convoClient != nil {
+func (gc *GuiClient) Replies(round uint32, replies [][]byte) {
+	gc.mu.Lock()
+	st := gc.pendingRounds[round]
+	gc.mu.Unlock()
+
+	for i, convo := range st.activeConvos {
+		convo.Reply(round, replies[i])
+	}
+}
+
+func (gc *GuiClient) activateConvo(convo *Conversation, key *[32]byte) bool {
+	gc.mu.Lock()
+	defer gc.mu.Unlock()
+
+	if len(gc.active) < NumOutgoing {
+		gc.active[convo] = true
 		convo.Lock()
+		convo.secretKey = key
 		convo.lastPeerResponding = false
 		convo.lastLatency = 0
 		convo.Unlock()
-		gc.convoClient.SetConvoHandler(convo)
+		return true
 	}
+
+	return false
+}
+
+func (gc *GuiClient) deactivateConvo(convo *Conversation) bool {
+	gc.mu.Lock()
+	if gc.active[convo] {
+		delete(gc.active, convo)
+		gc.mu.Unlock()
+	} else {
+		gc.mu.Unlock()
+		return false
+	}
+
+	return true
+}
+
+func (gc *GuiClient) getOrCreateConvo(username string) *Conversation {
+	gc.mu.Lock()
+	defer gc.mu.Unlock()
+
+	for _, convo := range gc.conversations {
+		if convo.peerUsername == username {
+			return convo
+		}
+	}
+
+	convo := &Conversation{
+		peerUsername: username,
+		myUsername:   gc.myName,
+		gc:           gc,
+	}
+	convo.Init()
+
+	gc.conversations = append(gc.conversations, convo)
+	maxX, maxY := gc.gui.Size()
+	if err := setConvoView(gc.gui, convo.ViewName(), maxX, maxY); err != nil {
+		panic(err)
+	}
+
+	return convo
 }
 
 var commands = map[string]func(*GuiClient, []string) error{
+	"help": func(gc *GuiClient, _ []string) error {
+		return gc.printHelp()
+	},
+
 	"quit": func(_ *GuiClient, _ []string) error {
 		return gocui.ErrQuit
 	},
 
-	"list": func(gc *GuiClient, _ []string) error {
-		mv, err := gc.gui.View("main")
-		if err != nil {
-			return err
+	"w": func(gc *GuiClient, args []string) error {
+		if len(args) == 0 {
+			gc.Warnf("Missing username\n")
+			return nil
 		}
+
+		username := args[0]
+		convo := gc.getOrCreateConvo(username)
+		return gc.focusConvo(convo)
+	},
+
+	"wc": func(gc *GuiClient, args []string) error {
+		gc.mu.Lock()
+		convo := gc.selectedConvo
+		gc.mu.Unlock()
+		if convo == nil {
+			gc.Warnf("You can't close the main window!\n")
+			return nil
+		}
+
+		gc.deactivateConvo(convo)
+
+		gc.mu.Lock()
+		index := -1
+		for i, c := range gc.conversations {
+			if c == convo {
+				index = i
+			}
+		}
+		// delete element from list (slice tricks)
+		copy(gc.conversations[index:], gc.conversations[index+1:])
+		gc.conversations[len(gc.conversations)-1] = nil
+		gc.conversations = gc.conversations[:len(gc.conversations)-1]
+		gc.mu.Unlock()
+
+		// TODO focus the previous window instead
+		return gc.focusMain()
+	},
+
+	"list": func(gc *GuiClient, _ []string) error {
+		buf := new(bytes.Buffer)
 
 		inReqs := gc.alpenhornClient.GetIncomingFriendRequests()
 		if len(inReqs) > 0 {
-			fmt.Fprintf(mv, "%s\n", ansi.Colorf("Incoming Friend Requests", ansi.Bold))
-			tw := tabwriter.NewWriter(mv, 0, 0, 1, ' ', 0)
+			fmt.Fprintf(buf, "%s\n", ansi.Colorf("Incoming Friend Requests", ansi.Bold))
+			tw := tabwriter.NewWriter(buf, 0, 0, 1, ' ', 0)
 			for _, req := range inReqs {
 				key := base32.EncodeToString(req.LongTermKey)
 				fmt.Fprintf(tw, "  %s\t{%s}\n", req.Username, key)
@@ -93,8 +199,8 @@ var commands = map[string]func(*GuiClient, []string) error{
 
 		outReqs := gc.alpenhornClient.GetOutgoingFriendRequests()
 		if len(outReqs) > 0 {
-			fmt.Fprintf(mv, "%s\n", ansi.Colorf("Outgoing Friend Requests", ansi.Bold))
-			tw := tabwriter.NewWriter(mv, 0, 0, 1, ' ', 0)
+			fmt.Fprintf(buf, "%s\n", ansi.Colorf("Outgoing Friend Requests", ansi.Bold))
+			tw := tabwriter.NewWriter(buf, 0, 0, 1, ' ', 0)
 			for _, req := range outReqs {
 				confirm := ""
 				if req.Confirmation {
@@ -110,11 +216,11 @@ var commands = map[string]func(*GuiClient, []string) error{
 		}
 
 		friends := gc.alpenhornClient.GetFriends()
-		fmt.Fprintf(mv, "%s\n", ansi.Colorf("Friends", ansi.Bold))
+		fmt.Fprintf(buf, "%s\n", ansi.Colorf("Friends", ansi.Bold))
 		if len(friends) == 0 {
-			fmt.Fprintf(mv, "  No friends; use /addfriend to add a friend\n")
+			fmt.Fprintf(buf, "  No friends; use /addfriend to add a friend\n")
 		} else {
-			tw := tabwriter.NewWriter(mv, 0, 0, 1, ' ', 0)
+			tw := tabwriter.NewWriter(buf, 0, 0, 1, ' ', 0)
 			for _, friend := range friends {
 				keyRound, key := friend.UnsafeKeywheelState()
 				keyStr := base64.RawURLEncoding.EncodeToString(key[:])[:12]
@@ -122,26 +228,95 @@ var commands = map[string]func(*GuiClient, []string) error{
 			}
 			tw.Flush()
 		}
-		fmt.Fprintf(mv, "\n")
+		fmt.Fprintf(buf, "\n")
+
+		gc.Printf("%s", buf.String())
 
 		return nil
 	},
 
 	"call": func(gc *GuiClient, args []string) error {
-		if len(args) == 0 {
-			gc.Warnf("Missing username\n")
+		gc.mu.Lock()
+		convo := gc.selectedConvo
+		gc.mu.Unlock()
+		if len(args) == 0 && convo == nil {
+			gc.Warnf("Try `/call <username>` or run /call in a conversation window.\n")
 			return nil
 		}
 
-		username := args[0]
-		friend := gc.alpenhornClient.GetFriend(username)
+		if len(args) > 0 {
+			convo = gc.getOrCreateConvo(args[0])
+		}
+		gc.focusConvo(convo)
+
+		gc.mu.Lock()
+		numActive := len(gc.active)
+		gc.mu.Unlock()
+		if numActive == NumOutgoing {
+			convo.Warnf("Too many active conversations!\n")
+			return nil
+		}
+
+		friend := gc.alpenhornClient.GetFriend(convo.peerUsername)
 		if friend == nil {
-			gc.Warnf("Friend not found: %s\n", username)
+			convo.Warnf("%q is not in your friends list! Try `/addfriend %s` first.\n", convo.peerUsername, convo.peerUsername)
+			return nil
+		}
+		_ = friend.Call(0)
+		convo.Warnf("Calling %s ...\n", convo.peerUsername)
+
+		return nil
+	},
+
+	"hangup": func(gc *GuiClient, args []string) error {
+		gc.mu.Lock()
+		convo := gc.selectedConvo
+		gc.mu.Unlock()
+
+		if convo == nil {
+			gc.Warnf("/hangup only works in a conversation window.\n")
 			return nil
 		}
 
-		_ = friend.Call(0)
-		gc.Warnf("Calling %s ...\n", username)
+		if gc.deactivateConvo(convo) {
+			convo.Warnf("Hung up!\n")
+		} else {
+			convo.Warnf("This conversation is not active!\n")
+		}
+		return nil
+	},
+
+	"answer": func(gc *GuiClient, args []string) error {
+		gc.mu.Lock()
+		convo := gc.selectedConvo
+		gc.mu.Unlock()
+
+		if convo == nil {
+			gc.Warnf("/answer only works in a conversation window.\n")
+			return nil
+		}
+
+		if convo.pendingCall == nil {
+			convo.Warnf("No pending call.\n")
+			return nil
+		}
+		var sessionKey *[32]byte
+		switch call := convo.pendingCall.(type) {
+		case *alpenhorn.IncomingCall:
+			sessionKey = call.SessionKey
+		case *alpenhorn.OutgoingCall:
+			sessionKey = call.SessionKey()
+		default:
+			panic(fmt.Sprintf("unknown call type: %T", call))
+		}
+		if gc.activateConvo(convo, sessionKey) {
+			convo.Lock()
+			convo.pendingCall = nil
+			convo.Unlock()
+			convo.Warnf("Now talking to %q\n", convo.peerUsername)
+		} else {
+			convo.Warnf("Too many active conversations! Hang up another convo and try again.\n")
+		}
 		return nil
 	},
 
@@ -152,7 +327,11 @@ var commands = map[string]func(*GuiClient, []string) error{
 		}
 
 		username := args[0]
-		_, _ = gc.alpenhornClient.SendFriendRequest(username, nil)
+		_, err := gc.alpenhornClient.SendFriendRequest(username, nil)
+		if err != nil {
+			gc.Warnf("Error sending friend request: %s", err)
+			return nil
+		}
 		gc.Warnf("Queued friend request: %s\n", username)
 		return nil
 	},
@@ -197,6 +376,24 @@ var commands = map[string]func(*GuiClient, []string) error{
 	},
 }
 
+// avoid initialization loop
+var allCommands map[string]func(*GuiClient, []string) error
+
+func init() {
+	allCommands = commands
+}
+
+func (gc *GuiClient) printHelp() error {
+	validCmds := make([]string, 0)
+	for cmd := range allCommands {
+		validCmds = append(validCmds, cmd)
+	}
+	sort.Strings(validCmds)
+	gc.Warnf("Valid commands: %v\n", validCmds)
+	gc.Warnf("Report bugs to: https://github.com/vuvuzela/vuvuzela\n")
+	return nil
+}
+
 func (gc *GuiClient) handleLine(line string) error {
 	if line[0] == '/' {
 		args := strings.Fields(line[1:])
@@ -213,16 +410,22 @@ func (gc *GuiClient) handleLine(line string) error {
 			}
 			sort.Strings(validCmds)
 			gc.Warnf("Valid commands: %v\n", validCmds)
-		} else {
-			return handler(gc, args[1:])
+			return nil
 		}
-	} else {
-		if gc.selectedConvo.QueueTextMessage([]byte(line)) {
-			gc.Printf("<%s> %s\n", gc.myName, line)
-		} else {
-			gc.Warnf("Queue full, message not sent to %s: %s\n", gc.myName, line)
-		}
+
+		return handler(gc, args[1:])
 	}
+
+	gc.mu.Lock()
+	convo := gc.selectedConvo
+	gc.mu.Unlock()
+
+	if convo == nil {
+		gc.Warnf("Try typing a command like /help or /call <username>.\n")
+		return nil
+	}
+
+	convo.QueueTextMessage([]byte(line))
 
 	return nil
 }
@@ -301,31 +504,121 @@ func (gc *GuiClient) redraw() {
 	})
 }
 
-func (gc *GuiClient) Warnf(format string, v ...interface{}) {
-	gc.gui.Update(func(gui *gocui.Gui) error {
-		mv, err := gui.View("main")
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(mv, "-!- "+format, v...)
-		return nil
-	})
-}
-
+// Printf writes a string to the main window and should only be called from
+// the Go routine that runs the GUI loop.
 func (gc *GuiClient) Printf(format string, v ...interface{}) {
+	mv, err := gc.gui.View("main")
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(mv, format, v...)
+
+	go func() {
+		gc.mu.Lock()
+		if gc.selectedConvo != nil {
+			gc.mainUnread = true
+		}
+		gc.mu.Unlock()
+	}()
+}
+
+// PrintfSync writes a string to the main window and should be called
+// from Go routines that are not the GUI loop.
+func (gc *GuiClient) PrintfSync(format string, v ...interface{}) {
+	done := make(chan struct{})
 	gc.gui.Update(func(gui *gocui.Gui) error {
+		defer close(done)
 		mv, err := gui.View("main")
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(mv, format, v...)
-		return nil
+		_, err = fmt.Fprintf(mv, format, v...)
+		return err
 	})
+
+	go func() {
+		gc.mu.Lock()
+		if gc.selectedConvo != nil {
+			gc.mainUnread = true
+		}
+		gc.mu.Unlock()
+	}()
+
+	<-done
 }
 
-func (gc *GuiClient) layout(g *gocui.Gui) error {
-	maxX, maxY := g.Size()
-	if v, err := g.SetView("main", 0, -1, maxX-1, maxY-1); err != nil {
+func (gc *GuiClient) Warnf(format string, v ...interface{}) {
+	gc.Printf("-!- "+format, v...)
+}
+
+func (gc *GuiClient) WarnfSync(format string, v ...interface{}) {
+	gc.PrintfSync("-!- "+format, v...)
+}
+
+func (gc *GuiClient) focusMain() error {
+	gc.mu.Lock()
+	prev := gc.selectedConvo
+	if prev != nil {
+		prev.Lock()
+		prev.focused = false
+		prev.Unlock()
+	}
+	gc.selectedConvo = nil
+	gc.mainUnread = false
+	gc.mu.Unlock()
+	return gc.setViewOnTop("main")
+}
+
+func (gc *GuiClient) focusConvo(c *Conversation) error {
+	gc.mu.Lock()
+	prev := gc.selectedConvo
+	if prev != nil {
+		prev.Lock()
+		prev.focused = false
+		prev.Unlock()
+	}
+	gc.selectedConvo = c
+	gc.mu.Unlock()
+
+	c.Lock()
+	c.unread = false
+	c.focused = true
+	c.Unlock()
+
+	return gc.setViewOnTop(c.ViewName())
+}
+
+func (gc *GuiClient) focusConvoIndex(index int) error {
+	if index == 0 {
+		return gc.focusMain()
+	}
+
+	convoIndex := index - 1
+	if convoIndex > len(gc.conversations)-1 {
+		return nil
+	}
+
+	gc.mu.Lock()
+	convo := gc.conversations[convoIndex]
+	gc.mu.Unlock()
+
+	return gc.focusConvo(convo)
+}
+
+func (gc *GuiClient) setViewOnTop(view string) error {
+	_, err := gc.gui.SetViewOnTop(view)
+	if err != nil {
+		return err
+	}
+	_, err = gc.gui.SetViewOnTop("status")
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func setConvoView(g *gocui.Gui, name string, maxX, maxY int) error {
+	if v, err := g.SetView(name, 0, -1, maxX-1, maxY-1); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
@@ -333,6 +626,24 @@ func (gc *GuiClient) layout(g *gocui.Gui) error {
 		v.Wrap = true
 		v.Frame = false
 	}
+	return nil
+}
+
+func (gc *GuiClient) layout(g *gocui.Gui) error {
+	maxX, maxY := g.Size()
+	if err := setConvoView(g, "main", maxX, maxY); err != nil {
+		return err
+	}
+
+	gc.mu.Lock()
+	defer gc.mu.Unlock()
+
+	for _, convo := range gc.conversations {
+		if err := setConvoView(g, convo.ViewName(), maxX, maxY); err != nil {
+			return err
+		}
+	}
+
 	sv, err := g.SetView("status", -1, maxY-3, maxX, maxY-1)
 	if err != nil {
 		if err != gocui.ErrUnknownView {
@@ -345,19 +656,42 @@ func (gc *GuiClient) layout(g *gocui.Gui) error {
 	}
 	sv.Clear()
 
-	st := gc.selectedConvo.Status()
-	latency := fmt.Sprintf("%.1fs", st.Latency)
-	if st.Latency == 0.0 {
-		latency = "-"
+	menu := "1"
+	if gc.selectedConvo == nil {
+		menu = fmt.Sprintf("%d", ansi.Colorf(1, ansi.Bold))
+	} else if gc.mainUnread {
+		menu = fmt.Sprintf("%d:main", ansi.Colorf(1, ansi.Green, ansi.Bold))
 	}
-	round := fmt.Sprintf("%d", st.Round)
-	if st.Round == 0 {
-		round = "-"
+	for i, convo := range gc.conversations {
+		menuNumber := i + 2
+		if convo == gc.selectedConvo {
+			menu += fmt.Sprintf(",%d", ansi.Colorf(menuNumber, ansi.Bold))
+		} else if convo.Status().Unread {
+			menu += fmt.Sprintf(",%d:%s", ansi.Colorf(menuNumber, ansi.Green, ansi.Bold), convo.peerUsername)
+		} else {
+			menu += fmt.Sprintf(",%d", menuNumber)
+		}
 	}
-	fmt.Fprintf(sv, " [%s]  [round: %s]  [latency: %s]", gc.myName, round, latency)
 
-	partner := "(no partner)"
-	if !gc.selectedConvo.Solo() {
+	var convoStatus *Status
+	var roundLatency string
+	if gc.selectedConvo != nil && gc.active[gc.selectedConvo] {
+		convoStatus = gc.selectedConvo.Status()
+		latency := fmt.Sprintf("%.1fs", convoStatus.Latency)
+		if convoStatus.Latency == 0.0 {
+			latency = "-"
+		}
+		round := fmt.Sprintf("%d", convoStatus.Round)
+		if convoStatus.Round == 0 {
+			round = "-"
+		}
+		roundLatency = fmt.Sprintf("  [round: %s]  [latency: %s]  ", round, latency)
+	}
+
+	fmt.Fprintf(sv, " [%s]  [%s]%s", gc.myName, menu, roundLatency)
+
+	partner := "vuvuzela"
+	if gc.selectedConvo != nil {
 		partner = gc.selectedConvo.peerUsername
 	}
 
@@ -371,10 +705,17 @@ func (gc *GuiClient) layout(g *gocui.Gui) error {
 	}
 	pv.Clear()
 
-	if st.PeerResponding {
-		pv.FgColor = gocui.ColorGreen
+	if gc.selectedConvo == nil {
+		pv.FgColor = gocui.ColorDefault
 	} else {
-		pv.FgColor = gocui.ColorRed
+		if gc.active[gc.selectedConvo] {
+			pv.FgColor = gocui.ColorYellow
+			if convoStatus.PeerResponding {
+				pv.FgColor = gocui.ColorGreen
+			}
+		} else {
+			pv.FgColor = gocui.ColorRed
+		}
 	}
 	fmt.Fprintf(pv, "%s>", partner)
 
@@ -391,7 +732,10 @@ func (gc *GuiClient) layout(g *gocui.Gui) error {
 		}
 	}
 
-	return nil
+	if gc.selectedConvo != nil {
+		return gc.setViewOnTop(gc.selectedConvo.ViewName())
+	}
+	return gc.setViewOnTop("main")
 }
 
 func quit(g *gocui.Gui, v *gocui.View) error {
@@ -402,15 +746,15 @@ func (gc *GuiClient) Connect() {
 	gc.Register()
 
 	if err := gc.alpenhornClient.Connect(); err != nil {
-		gc.Warnf("Failed to connect to alpenhorn service: %s\n", err)
+		gc.WarnfSync("Failed to connect to alpenhorn service: %s\n", err)
 	} else {
-		gc.Warnf("Connected to alpenhorn service.\n")
+		gc.WarnfSync("Connected to alpenhorn service.\n")
 	}
 
 	if err := gc.convoClient.Connect(); err != nil {
-		gc.Warnf("Failed to connect to convo service: %s\n", err)
+		gc.WarnfSync("Failed to connect to convo service: %s\n", err)
 	} else {
-		gc.Warnf("Connected to convo service.\n")
+		gc.WarnfSync("Connected to convo service.\n")
 	}
 }
 
@@ -425,12 +769,12 @@ func (gc *GuiClient) Register() {
 		if ok && pkgErr.Code == pkg.ErrNotRegistered {
 			err := gc.alpenhornClient.Register(st.Server)
 			if err != nil {
-				gc.Warnf("Failed to register with PKG %s: %s\n", st.Server.Address, err)
+				gc.WarnfSync("Failed to register with PKG %s: %s\n", st.Server.Address, err)
 				continue
 			}
-			gc.Warnf("Registered %q with PKG %s\n", gc.alpenhornClient.Username, st.Server.Address)
+			gc.WarnfSync("Registered %q with PKG %s\n", gc.alpenhornClient.Username, st.Server.Address)
 		} else {
-			gc.Warnf("Failed to check account status with PKG %s: %s\n", st.Server.Address, st.Error)
+			gc.WarnfSync("Failed to check account status with PKG %s: %s\n", st.Server.Address, st.Error)
 		}
 	}
 }
@@ -448,6 +792,15 @@ func (gc *GuiClient) Run() {
 	if err := gui.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
 		panic(err)
 	}
+	for i, ch := range []rune{'1', '2', '3', '4', '5', '6', '7', '8', '9', '0'} {
+		i := i
+		err := gui.SetKeybinding("", ch, gocui.ModAlt, func(g *gocui.Gui, v *gocui.View) error {
+			return gc.focusConvoIndex(i)
+		})
+		if err != nil {
+			panic(err)
+		}
+	}
 	if err := gui.SetKeybinding("input", gocui.KeyEnter, gocui.ModNone, gc.readLine); err != nil {
 		panic(err)
 	}
@@ -457,11 +810,6 @@ func (gc *GuiClient) Run() {
 	gui.Cursor = true
 	gui.BgColor = gocui.ColorDefault
 	gui.FgColor = gocui.ColorDefault
-
-	gc.conversations = make(map[string]*Conversation)
-	// We need an active conversation to render the GUI
-	// and to connect to the convo service.
-	gc.switchConversation(gc.myName, nil)
 
 	go func() {
 		time.Sleep(500 * time.Millisecond)
@@ -487,7 +835,7 @@ func (gc *GuiClient) Fire(e *log.Entry) {
 	log.Logfmt(buf, e.Fields)
 	buf.WriteByte('\n')
 
-	gc.Warnf("%s", buf.Bytes())
+	gc.WarnfSync("%s", buf.Bytes())
 }
 
 func vuvuzelaEditor(v *gocui.View, key gocui.Key, ch rune, mod gocui.Modifier) {

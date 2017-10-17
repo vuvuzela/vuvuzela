@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jroimartin/gocui"
 	"golang.org/x/crypto/nacl/secretbox"
 
 	"vuvuzela.io/alpenhorn/log"
@@ -17,33 +18,32 @@ import (
 )
 
 type Conversation struct {
-	sync.RWMutex
-
-	myUsername   string
 	peerUsername string
+	myUsername   string
+
+	gc *GuiClient
+
+	sync.RWMutex
 	secretKey    *[32]byte
-
-	gui *GuiClient
-
-	outQueue      chan []byte
-	pendingRounds map[uint32]*pendingRound
+	outQueue     chan []byte
+	sentMessages map[uint32][]byte
+	pendingCall  interface{} // either an IncomingCall or OutgoingCall
 
 	lastPeerResponding bool
 	lastLatency        time.Duration
 	lastRound          uint32
+	unread             bool
+	focused            bool
 }
 
 func (c *Conversation) Init() {
-	c.Lock()
 	c.outQueue = make(chan []byte, 64)
-	c.pendingRounds = make(map[uint32]*pendingRound)
 	c.lastPeerResponding = false
-	c.Unlock()
+	c.sentMessages = make(map[uint32][]byte)
 }
 
-type pendingRound struct {
-	onionSharedKeys []*[32]byte
-	sentMessage     [convo.SizeEncryptedMessageBody]byte
+func (c *Conversation) ViewName() string {
+	return c.peerUsername
 }
 
 type ConvoMessage struct {
@@ -86,13 +86,66 @@ func (cm *ConvoMessage) Unmarshal(msg []byte) error {
 	return nil
 }
 
-func (c *Conversation) QueueTextMessage(msg []byte) bool {
+func (c *Conversation) QueueTextMessage(msg []byte) {
+	var ok bool
 	select {
 	case c.outQueue <- msg:
-		return true
+		ok = true
 	default:
-		return false
+		ok = false
 	}
+
+	if ok {
+		c.Printf("<%s> %s\n", c.myUsername, msg)
+	} else {
+		c.Warnf("Queue full, message not sent to %s: %s\n", c.peerUsername, msg)
+	}
+}
+
+func (c *Conversation) Printf(format string, args ...interface{}) {
+	v, err := c.gc.gui.View(c.ViewName())
+	if err != nil {
+		return
+	}
+
+	fmt.Fprintf(v, format, args...)
+
+	c.Lock()
+	defer c.Unlock()
+	if !c.focused {
+		c.unread = true
+	}
+}
+
+func (c *Conversation) PrintfSync(format string, args ...interface{}) {
+	done := make(chan struct{})
+	c.gc.gui.Update(func(g *gocui.Gui) error {
+		defer close(done)
+
+		v, err := g.View(c.ViewName())
+		if err != nil {
+			return err
+		}
+
+		_, err = fmt.Fprintf(v, format, args...)
+
+		return err
+	})
+	<-done
+
+	c.Lock()
+	defer c.Unlock()
+	if !c.focused {
+		c.unread = true
+	}
+}
+
+func (c *Conversation) Warnf(format string, args ...interface{}) {
+	c.Printf("-!- "+format, args...)
+}
+
+func (c *Conversation) WarnfSync(format string, args ...interface{}) {
+	c.PrintfSync("-!- "+format, args...)
 }
 
 func (c *Conversation) NextMessage(round uint32) *convo.DeadDropMessage {
@@ -100,7 +153,7 @@ func (c *Conversation) NextMessage(round uint32) *convo.DeadDropMessage {
 	c.lastRound = round
 	c.Unlock()
 	// update the round number in the status bar
-	go c.gui.redraw()
+	go c.gc.redraw()
 
 	var body interface{}
 
@@ -121,11 +174,8 @@ func (c *Conversation) NextMessage(round uint32) *convo.DeadDropMessage {
 	ctxt := c.Seal(msgdata[:], round)
 	copy(encmsg[:], ctxt)
 
-	pr := &pendingRound{
-		sentMessage: encmsg,
-	}
 	c.Lock()
-	c.pendingRounds[round] = pr
+	c.sentMessages[round] = encmsg[:]
 	c.Unlock()
 
 	return &convo.DeadDropMessage{
@@ -142,19 +192,19 @@ func (c *Conversation) Reply(round uint32, encmsg []byte) {
 		c.Lock()
 		c.lastPeerResponding = responding
 		c.Unlock()
-		c.gui.redraw()
+		c.gc.redraw()
 	}()
 
 	c.Lock()
-	pr, ok := c.pendingRounds[round]
-	delete(c.pendingRounds, round)
+	sentMessage, ok := c.sentMessages[round]
+	delete(c.sentMessages, round)
 	c.Unlock()
 	if !ok {
 		rlog.Error("round not found")
 		return
 	}
 
-	if bytes.Compare(encmsg, pr.sentMessage[:]) == 0 && !c.Solo() {
+	if bytes.Compare(encmsg, sentMessage) == 0 && !c.Solo() {
 		return
 	}
 
@@ -175,7 +225,7 @@ func (c *Conversation) Reply(round uint32, encmsg []byte) {
 	switch m := msg.Body.(type) {
 	case *TextMessage:
 		s := strings.TrimRight(string(m.Message), "\x00")
-		c.gui.Printf("<%s> %s\n", c.peerUsername, s)
+		c.PrintfSync("<%s> %s\n", c.peerUsername, s)
 	case *TimestampMessage:
 		latency := time.Now().Sub(m.Timestamp)
 		c.Lock()
@@ -188,6 +238,7 @@ type Status struct {
 	PeerResponding bool
 	Round          uint32
 	Latency        float64
+	Unread         bool
 }
 
 func (c *Conversation) Status() *Status {
@@ -196,6 +247,7 @@ func (c *Conversation) Status() *Status {
 		PeerResponding: c.lastPeerResponding,
 		Round:          c.lastRound,
 		Latency:        float64(c.lastLatency) / float64(time.Second),
+		Unread:         c.unread,
 	}
 	c.RUnlock()
 	return status
