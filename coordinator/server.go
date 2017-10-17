@@ -39,7 +39,7 @@ type Server struct {
 
 	mu             sync.Mutex
 	round          uint32
-	onions         []onion
+	onions         []onionBundle
 	closed         bool
 	shutdown       chan struct{}
 	latestMixRound *MixRound
@@ -48,9 +48,9 @@ type Server struct {
 	mixnetClient *mixnet.Client
 }
 
-type onion struct {
+type onionBundle struct {
 	sender typesocket.Conn
-	data   []byte
+	onions [][]byte
 }
 
 var ErrServerClosed = errors.New("coordinator: server closed")
@@ -72,7 +72,7 @@ func (srv *Server) Run() error {
 	}
 
 	srv.mu.Lock()
-	srv.onions = make([]onion, 0, 128)
+	srv.onions = make([]onionBundle, 0, 128)
 	srv.closed = false
 	srv.shutdown = make(chan struct{})
 	srv.mu.Unlock()
@@ -106,8 +106,8 @@ func (srv *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 type OnionMsg struct {
-	Round uint32
-	Onion []byte
+	Round  uint32
+	Onions [][]byte
 }
 
 type NewRound struct {
@@ -145,9 +145,9 @@ func (srv *Server) incomingOnion(c typesocket.Conn, o OnionMsg) {
 	srv.mu.Lock()
 	round := srv.round
 	if o.Round == round {
-		srv.onions = append(srv.onions, onion{
+		srv.onions = append(srv.onions, onionBundle{
 			sender: c,
-			data:   o.Onion,
+			onions: o.Onions,
 		})
 	}
 	srv.mu.Unlock()
@@ -231,7 +231,7 @@ func (srv *Server) loop() {
 		logger.Info("Running round")
 		srv.mu.Lock()
 		go srv.runRound(context.Background(), mixServers[0], round, srv.onions)
-		srv.onions = make([]onion, 0, len(srv.onions))
+		srv.onions = make([]onionBundle, 0, len(srv.onions))
 		srv.mu.Unlock()
 
 		logger.Info("Waiting for next round")
@@ -254,12 +254,25 @@ func (srv *Server) sleep(d time.Duration) bool {
 	}
 }
 
-func (srv *Server) runRound(ctx context.Context, firstServer mixnet.PublicServerConfig, round uint32, out []onion) {
-	onions := make([][]byte, len(out))
-	senders := make([]typesocket.Conn, len(out))
+type senderRange struct {
+	sender     typesocket.Conn
+	start, end int
+}
+
+func (srv *Server) runRound(ctx context.Context, firstServer mixnet.PublicServerConfig, round uint32, out []onionBundle) {
+	numOnions := 0
+	for _, bundle := range out {
+		numOnions += len(bundle.onions)
+	}
+
+	onions := make([][]byte, 0, numOnions)
+	senders := make([]senderRange, len(out))
 	for i, o := range out {
-		onions[i] = o.data
-		senders[i] = o.sender
+		senders[i] = senderRange{
+			sender: o.sender,
+			start:  len(onions), end: len(onions) + len(o.onions),
+		}
+		onions = append(onions, o.onions...)
 	}
 
 	logger := log.WithFields(log.Fields{"round": round})
@@ -275,11 +288,12 @@ func (srv *Server) runRound(ctx context.Context, firstServer mixnet.PublicServer
 	end := time.Now()
 	logger.WithFields(log.Fields{"duration": end.Sub(start)}).Info("end RunRound")
 
-	concurrency.ParallelFor(len(replies), func(p *concurrency.P) {
+	concurrency.ParallelFor(len(senders), func(p *concurrency.P) {
 		for i, ok := p.Next(); ok; i, ok = p.Next() {
-			senders[i].Send("reply", OnionMsg{
-				Round: round,
-				Onion: replies[i],
+			sr := senders[i]
+			sr.sender.Send("reply", OnionMsg{
+				Round:  round,
+				Onions: replies[sr.start:sr.end],
 			})
 		}
 	})
