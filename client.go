@@ -25,38 +25,31 @@ type Client struct {
 	PersistPath string
 
 	ConfigClient *config.Client
+	Handler      ConvoHandler
 
 	conn typesocket.Conn
 
-	mu           sync.Mutex
-	rounds       map[uint32]*roundState
-	convoHandler ConvoHandler
+	mu     sync.Mutex
+	rounds map[uint32]*roundState
 
 	convoConfig     *config.SignedConfig
 	convoConfigHash string
 }
 
 type roundState struct {
-	OnionKeys    []*[32]byte
-	Handler      ConvoHandler
+	OnionKeys    [][]*[32]byte
 	Config       *convo.ConvoConfig
 	ConfigParent *config.SignedConfig
 }
 
 type ConvoHandler interface {
-	NextMessage(round uint32) *convo.DeadDropMessage
-	Reply(round uint32, msg []byte)
-}
-
-func (c *Client) SetConvoHandler(convo ConvoHandler) {
-	c.mu.Lock()
-	c.convoHandler = convo
-	c.mu.Unlock()
+	Outgoing(round uint32) []*convo.DeadDropMessage
+	Replies(round uint32, messages [][]byte)
 }
 
 func (c *Client) Connect() error {
 	// TODO check if already connected
-	if c.convoHandler == nil {
+	if c.Handler == nil {
 		return fmt.Errorf("no convo handler")
 	}
 
@@ -160,21 +153,21 @@ func (c *Client) sendConvoOnion(conn typesocket.Conn, v coordinator.MixRound) {
 		}
 	}
 
-	c.mu.Lock()
-	roundHandler := c.convoHandler
-	c.mu.Unlock()
+	outgoing := c.Handler.Outgoing(round)
+	onionKeys := make([][]*[32]byte, len(outgoing))
+	onions := make([][]byte, len(outgoing))
+	for i, deadDropMsg := range outgoing {
+		msg := deadDropMsg.Marshal()
+		onions[i], onionKeys[i] = onionbox.Seal(msg, mixnet.ForwardNonce(round), v.MixSettings.OnionKeys)
+	}
 
-	msg := roundHandler.NextMessage(round).Marshal()
-	ctxt, keys := onionbox.Seal(msg, mixnet.ForwardNonce(round), v.MixSettings.OnionKeys)
-
 	c.mu.Lock()
-	st.Handler = roundHandler
-	st.OnionKeys = keys
+	st.OnionKeys = onionKeys
 	c.mu.Unlock()
 
 	conn.Send("onion", coordinator.OnionMsg{
-		Round: round,
-		Onion: ctxt,
+		Round:  round,
+		Onions: onions,
 	})
 }
 
@@ -187,12 +180,21 @@ func (c *Client) openReplyOnion(conn typesocket.Conn, v coordinator.OnionMsg) {
 		return
 	}
 
-	msg, ok := onionbox.Open(v.Onion, mixnet.BackwardNonce(v.Round), st.OnionKeys)
-	if !ok {
-		log.WithFields(log.Fields{"round": v.Round}).Error("failed to decrypt onion")
+	if len(st.OnionKeys) != len(v.Onions) {
+		log.WithFields(log.Fields{"round": v.Round}).Errorf("expected %d onions, got %d", len(st.OnionKeys), len(v.Onions))
+		return
 	}
 
-	st.Handler.Reply(v.Round, msg)
+	msgs := make([][]byte, len(v.Onions))
+	for i, onion := range v.Onions {
+		msg, ok := onionbox.Open(onion, mixnet.BackwardNonce(v.Round), st.OnionKeys[i])
+		if !ok {
+			log.WithFields(log.Fields{"round": v.Round}).Error("failed to decrypt onion")
+		}
+		msgs[i] = msg
+	}
+
+	c.Handler.Replies(v.Round, msgs)
 
 	c.mu.Lock()
 	delete(c.rounds, v.Round)
