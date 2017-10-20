@@ -135,249 +135,287 @@ func (gc *GuiClient) getOrCreateConvo(username string) *Conversation {
 	return convo
 }
 
-var commands = map[string]func(*GuiClient, []string) error{
-	"help": func(gc *GuiClient, _ []string) error {
-		return gc.printHelp()
+type Command struct {
+	Help    string
+	Handler func(gc *GuiClient, args []string) error
+}
+
+var commands = map[string]Command{
+	"help": {
+		Help: "/help prints this help message.",
+		Handler: func(gc *GuiClient, _ []string) error {
+			return gc.printHelp()
+		},
 	},
 
-	"quit": func(_ *GuiClient, _ []string) error {
-		return gocui.ErrQuit
+	"quit": {
+		Help: "/quit quits vuvuzela.",
+		Handler: func(_ *GuiClient, _ []string) error {
+			return gocui.ErrQuit
+		},
 	},
 
-	"w": func(gc *GuiClient, args []string) error {
-		if len(args) == 0 {
-			gc.Warnf("Missing username\n")
-			return nil
-		}
-
-		username := args[0]
-		convo := gc.getOrCreateConvo(username)
-		return gc.focusConvo(convo)
-	},
-
-	"wc": func(gc *GuiClient, args []string) error {
-		gc.mu.Lock()
-		convo := gc.selectedConvo
-		gc.mu.Unlock()
-		if convo == nil {
-			gc.Warnf("You can't close the main window!\n")
-			return nil
-		}
-
-		gc.deactivateConvo(convo)
-
-		gc.mu.Lock()
-		index := -1
-		for i, c := range gc.conversations {
-			if c == convo {
-				index = i
-			}
-		}
-		// delete element from list (slice tricks)
-		copy(gc.conversations[index:], gc.conversations[index+1:])
-		gc.conversations[len(gc.conversations)-1] = nil
-		gc.conversations = gc.conversations[:len(gc.conversations)-1]
-		gc.mu.Unlock()
-
-		// TODO focus the previous window instead
-		return gc.focusMain()
-	},
-
-	"list": func(gc *GuiClient, _ []string) error {
-		buf := new(bytes.Buffer)
-
-		inReqs := gc.alpenhornClient.GetIncomingFriendRequests()
-		if len(inReqs) > 0 {
-			fmt.Fprintf(buf, "%s\n", ansi.Colorf("Incoming Friend Requests", ansi.Bold))
-			tw := tabwriter.NewWriter(buf, 0, 0, 1, ' ', 0)
-			for _, req := range inReqs {
-				key := base32.EncodeToString(req.LongTermKey)
-				fmt.Fprintf(tw, "  %s\t{%s}\n", req.Username, key)
-			}
-			tw.Flush()
-		}
-
-		outReqs := gc.alpenhornClient.GetOutgoingFriendRequests()
-		if len(outReqs) > 0 {
-			fmt.Fprintf(buf, "%s\n", ansi.Colorf("Outgoing Friend Requests", ansi.Bold))
-			tw := tabwriter.NewWriter(buf, 0, 0, 1, ' ', 0)
-			for _, req := range outReqs {
-				confirm := ""
-				if req.Confirmation {
-					confirm = "(confirmation)"
-				}
-				key := "(no key specified)"
-				if req.ExpectedKey != nil {
-					key = "{" + base32.EncodeToString(req.ExpectedKey) + "}"
-				}
-				fmt.Fprintf(tw, "  %s\t%s\t%s\n", req.Username, key, confirm)
-			}
-			tw.Flush()
-		}
-
-		friends := gc.alpenhornClient.GetFriends()
-		fmt.Fprintf(buf, "%s\n", ansi.Colorf("Friends", ansi.Bold))
-		if len(friends) == 0 {
-			fmt.Fprintf(buf, "  No friends; use /addfriend to add a friend\n")
-		} else {
-			tw := tabwriter.NewWriter(buf, 0, 0, 1, ' ', 0)
-			for _, friend := range friends {
-				keyRound, key := friend.UnsafeKeywheelState()
-				keyStr := base64.RawURLEncoding.EncodeToString(key[:])[:12]
-				fmt.Fprintf(tw, "  %s\t{%d|%s...}\n", friend.Username, keyRound, keyStr)
-			}
-			tw.Flush()
-		}
-		fmt.Fprintf(buf, "\n")
-
-		gc.Printf("%s", buf.String())
-
-		return nil
-	},
-
-	"call": func(gc *GuiClient, args []string) error {
-		gc.mu.Lock()
-		convo := gc.selectedConvo
-		gc.mu.Unlock()
-		if len(args) == 0 && convo == nil {
-			gc.Warnf("Try `/call <username>` or run /call in a conversation window.\n")
-			return nil
-		}
-
-		if len(args) > 0 {
-			convo = gc.getOrCreateConvo(args[0])
-		}
-		gc.focusConvo(convo)
-
-		gc.mu.Lock()
-		numActive := len(gc.active)
-		gc.mu.Unlock()
-		if numActive == NumOutgoing {
-			convo.Warnf("Too many active conversations!\n")
-			return nil
-		}
-
-		friend := gc.alpenhornClient.GetFriend(convo.peerUsername)
-		if friend == nil {
-			convo.Warnf("%q is not in your friends list! Try `/addfriend %s` first.\n", convo.peerUsername, convo.peerUsername)
-			return nil
-		}
-		_ = friend.Call(0)
-		convo.Warnf("Calling %s ...\n", convo.peerUsername)
-
-		return nil
-	},
-
-	"hangup": func(gc *GuiClient, args []string) error {
-		gc.mu.Lock()
-		convo := gc.selectedConvo
-		gc.mu.Unlock()
-
-		if convo == nil {
-			gc.Warnf("/hangup only works in a conversation window.\n")
-			return nil
-		}
-
-		if gc.deactivateConvo(convo) {
-			convo.Warnf("Hung up!\n")
-		} else {
-			convo.Warnf("This conversation is not active!\n")
-		}
-		return nil
-	},
-
-	"answer": func(gc *GuiClient, args []string) error {
-		gc.mu.Lock()
-		convo := gc.selectedConvo
-		gc.mu.Unlock()
-
-		if convo == nil {
-			gc.Warnf("/answer only works in a conversation window.\n")
-			return nil
-		}
-
-		if convo.pendingCall == nil {
-			convo.Warnf("No pending call.\n")
-			return nil
-		}
-		var sessionKey *[32]byte
-		switch call := convo.pendingCall.(type) {
-		case *alpenhorn.IncomingCall:
-			sessionKey = call.SessionKey
-		case *alpenhorn.OutgoingCall:
-			sessionKey = call.SessionKey()
-		default:
-			panic(fmt.Sprintf("unknown call type: %T", call))
-		}
-		if gc.activateConvo(convo, sessionKey) {
-			convo.Lock()
-			convo.pendingCall = nil
-			convo.Unlock()
-			convo.Warnf("Now talking to %q\n", convo.peerUsername)
-		} else {
-			convo.Warnf("Too many active conversations! Hang up another convo and try again.\n")
-		}
-		return nil
-	},
-
-	"addfriend": func(gc *GuiClient, args []string) error {
-		if len(args) == 0 {
-			gc.Warnf("Missing username\n")
-			return nil
-		}
-
-		username := args[0]
-		_, err := gc.alpenhornClient.SendFriendRequest(username, nil)
-		if err != nil {
-			gc.Warnf("Error sending friend request: %s", err)
-			return nil
-		}
-		gc.Warnf("Queued friend request: %s\n", username)
-		return nil
-	},
-
-	"delfriend": func(gc *GuiClient, args []string) error {
-		if len(args) == 0 {
-			gc.Warnf("Missing username\n")
-			return nil
-		}
-
-		username := args[0]
-		u := gc.alpenhornClient.GetFriend(username)
-		if u == nil {
-			gc.Warnf("Cannot find friend %s\n", username)
-		} else {
-			u.Remove()
-			gc.Warnf("Removed friend %s\n", username)
-		}
-		return nil
-	},
-
-	"approve": func(gc *GuiClient, args []string) error {
-		if len(args) == 0 {
-			gc.Warnf("Missing username\n")
-			return nil
-		}
-		username := args[0]
-		reqs := gc.alpenhornClient.GetIncomingFriendRequests()
-		for _, req := range reqs {
-			if req.Username == username {
-				_, err := req.Approve()
-				if err != nil {
-					gc.Warnf("error approving friend request: %s\n", err)
-					return nil
-				}
-				gc.Warnf("Approved friend request: %s\n", username)
+	"w": {
+		Help: "/w <username> goes to the convo window for the given username.",
+		Handler: func(gc *GuiClient, args []string) error {
+			if len(args) == 0 {
+				gc.Warnf("Missing username\n")
 				return nil
 			}
-		}
-		gc.Warnf("No friend request from %s\n", username)
-		return nil
+
+			username := args[0]
+			convo := gc.getOrCreateConvo(username)
+			return gc.focusConvo(convo)
+		},
+	},
+
+	"wc": {
+		Help: "/wc closes the current window.",
+		Handler: func(gc *GuiClient, args []string) error {
+			gc.mu.Lock()
+			convo := gc.selectedConvo
+			gc.mu.Unlock()
+			if convo == nil {
+				gc.Warnf("You can't close the main window!\n")
+				return nil
+			}
+
+			gc.deactivateConvo(convo)
+
+			gc.mu.Lock()
+			index := -1
+			for i, c := range gc.conversations {
+				if c == convo {
+					index = i
+				}
+			}
+			// delete element from list (slice tricks)
+			copy(gc.conversations[index:], gc.conversations[index+1:])
+			gc.conversations[len(gc.conversations)-1] = nil
+			gc.conversations = gc.conversations[:len(gc.conversations)-1]
+			gc.mu.Unlock()
+
+			// TODO focus the previous window instead
+			return gc.focusMain()
+		},
+	},
+
+	"list": {
+		Help: "/list prints your friends list and friend requests.",
+		Handler: func(gc *GuiClient, _ []string) error {
+			buf := new(bytes.Buffer)
+
+			inReqs := gc.alpenhornClient.GetIncomingFriendRequests()
+			if len(inReqs) > 0 {
+				fmt.Fprintf(buf, "%s\n", ansi.Colorf("Incoming Friend Requests", ansi.Bold))
+				tw := tabwriter.NewWriter(buf, 0, 0, 1, ' ', 0)
+				for _, req := range inReqs {
+					key := base32.EncodeToString(req.LongTermKey)
+					fmt.Fprintf(tw, "  %s\t{%s}\n", req.Username, key)
+				}
+				tw.Flush()
+			}
+
+			outReqs := gc.alpenhornClient.GetOutgoingFriendRequests()
+			if len(outReqs) > 0 {
+				fmt.Fprintf(buf, "%s\n", ansi.Colorf("Outgoing Friend Requests", ansi.Bold))
+				tw := tabwriter.NewWriter(buf, 0, 0, 1, ' ', 0)
+				for _, req := range outReqs {
+					confirm := ""
+					if req.Confirmation {
+						confirm = "(confirmation)"
+					}
+					key := "(no key specified)"
+					if req.ExpectedKey != nil {
+						key = "{" + base32.EncodeToString(req.ExpectedKey) + "}"
+					}
+					fmt.Fprintf(tw, "  %s\t%s\t%s\n", req.Username, key, confirm)
+				}
+				tw.Flush()
+			}
+
+			friends := gc.alpenhornClient.GetFriends()
+			fmt.Fprintf(buf, "%s\n", ansi.Colorf("Friends", ansi.Bold))
+			if len(friends) == 0 {
+				fmt.Fprintf(buf, "  No friends; use /addfriend to add a friend\n")
+			} else {
+				tw := tabwriter.NewWriter(buf, 0, 0, 1, ' ', 0)
+				for _, friend := range friends {
+					keyRound, key := friend.UnsafeKeywheelState()
+					keyStr := base64.RawURLEncoding.EncodeToString(key[:])[:12]
+					fmt.Fprintf(tw, "  %s\t{%d|%s...}\n", friend.Username, keyRound, keyStr)
+				}
+				tw.Flush()
+			}
+			fmt.Fprintf(buf, "\n")
+
+			gc.Printf("%s", buf.String())
+
+			return nil
+		},
+	},
+
+	"call": {
+		Help: "/call [<username>] calls a friend.",
+		Handler: func(gc *GuiClient, args []string) error {
+			gc.mu.Lock()
+			convo := gc.selectedConvo
+			gc.mu.Unlock()
+			if len(args) == 0 && convo == nil {
+				gc.Warnf("Try `/call <username>` or run /call in a conversation window.\n")
+				return nil
+			}
+
+			if len(args) > 0 {
+				convo = gc.getOrCreateConvo(args[0])
+			}
+			gc.focusConvo(convo)
+
+			gc.mu.Lock()
+			numActive := len(gc.active)
+			gc.mu.Unlock()
+			if numActive == NumOutgoing {
+				convo.Warnf("Too many active conversations!\n")
+				return nil
+			}
+
+			friend := gc.alpenhornClient.GetFriend(convo.peerUsername)
+			if friend == nil {
+				convo.Warnf("%q is not in your friends list! Try `/addfriend %s` first.\n", convo.peerUsername, convo.peerUsername)
+				return nil
+			}
+			_ = friend.Call(0)
+			convo.Warnf("Calling %s ...\n", convo.peerUsername)
+
+			return nil
+		},
+	},
+
+	"hangup": {
+		Help: "/hangup hangs up the current conversation.",
+		Handler: func(gc *GuiClient, args []string) error {
+			gc.mu.Lock()
+			convo := gc.selectedConvo
+			gc.mu.Unlock()
+
+			if convo == nil {
+				gc.Warnf("/hangup only works in a conversation window.\n")
+				return nil
+			}
+
+			if gc.deactivateConvo(convo) {
+				convo.Warnf("Hung up!\n")
+			} else {
+				convo.Warnf("This conversation is not active!\n")
+			}
+			return nil
+		},
+	},
+
+	"answer": {
+		Help: "/answer answers a held call.",
+		Handler: func(gc *GuiClient, args []string) error {
+			gc.mu.Lock()
+			convo := gc.selectedConvo
+			gc.mu.Unlock()
+
+			if convo == nil {
+				gc.Warnf("/answer only works in a conversation window.\n")
+				return nil
+			}
+
+			if convo.pendingCall == nil {
+				convo.Warnf("No pending call.\n")
+				return nil
+			}
+			var sessionKey *[32]byte
+			switch call := convo.pendingCall.(type) {
+			case *alpenhorn.IncomingCall:
+				sessionKey = call.SessionKey
+			case *alpenhorn.OutgoingCall:
+				sessionKey = call.SessionKey()
+			default:
+				panic(fmt.Sprintf("unknown call type: %T", call))
+			}
+			if gc.activateConvo(convo, sessionKey) {
+				convo.Lock()
+				convo.pendingCall = nil
+				convo.Unlock()
+				convo.Warnf("Now talking to %q\n", convo.peerUsername)
+			} else {
+				convo.Warnf("Too many active conversations! Hang up another convo and try again.\n")
+			}
+			return nil
+		},
+	},
+
+	"addfriend": {
+		Help: "/addfriend <username> sends a friend request to a friend.",
+		Handler: func(gc *GuiClient, args []string) error {
+			if len(args) == 0 {
+				gc.Warnf("Missing username\n")
+				return nil
+			}
+
+			username := args[0]
+			_, err := gc.alpenhornClient.SendFriendRequest(username, nil)
+			if err != nil {
+				gc.Warnf("Error sending friend request: %s", err)
+				return nil
+			}
+			gc.Warnf("Queued friend request: %s\n", username)
+			return nil
+		},
+	},
+
+	"delfriend": {
+		Help: "/delfriend <username> removes a friend from your friends list.",
+		Handler: func(gc *GuiClient, args []string) error {
+			if len(args) == 0 {
+				gc.Warnf("Missing username\n")
+				return nil
+			}
+
+			username := args[0]
+			u := gc.alpenhornClient.GetFriend(username)
+			if u == nil {
+				gc.Warnf("Cannot find friend %s\n", username)
+			} else {
+				u.Remove()
+				gc.Warnf("Removed friend %s\n", username)
+			}
+			return nil
+		},
+	},
+
+	"approve": {
+		Help: "/approve <username> approves a friend request.",
+		Handler: func(gc *GuiClient, args []string) error {
+			if len(args) == 0 {
+				gc.Warnf("Missing username\n")
+				return nil
+			}
+			username := args[0]
+			reqs := gc.alpenhornClient.GetIncomingFriendRequests()
+			for _, req := range reqs {
+				if req.Username == username {
+					_, err := req.Approve()
+					if err != nil {
+						gc.Warnf("error approving friend request: %s\n", err)
+						return nil
+					}
+					gc.Warnf("Approved friend request: %s\n", username)
+					return nil
+				}
+			}
+			gc.Warnf("No friend request from %s\n", username)
+			return nil
+		},
 	},
 }
 
 // avoid initialization loop
-var allCommands map[string]func(*GuiClient, []string) error
+var allCommands map[string]Command
 
 func init() {
 	allCommands = commands
@@ -389,7 +427,10 @@ func (gc *GuiClient) printHelp() error {
 		validCmds = append(validCmds, cmd)
 	}
 	sort.Strings(validCmds)
-	gc.Warnf("Valid commands: %v\n", validCmds)
+	gc.Warnf("Valid commands:\n")
+	for _, cmd := range validCmds {
+		gc.Warnf("  %s\n", allCommands[cmd].Help)
+	}
 	gc.Warnf("Report bugs to: https://github.com/vuvuzela/vuvuzela\n")
 	return nil
 }
@@ -413,7 +454,7 @@ func (gc *GuiClient) handleLine(line string) error {
 			return nil
 		}
 
-		return handler(gc, args[1:])
+		return handler.Handler(gc, args[1:])
 	}
 
 	gc.mu.Lock()
