@@ -216,11 +216,9 @@ var commands = map[string]Command{
 				tw.Flush()
 			}
 
-			outReqs := gc.alpenhornClient.GetOutgoingFriendRequests()
-			if len(outReqs) > 0 {
-				fmt.Fprintf(buf, "%s\n", ansi.Colorf("Outgoing Friend Requests", ansi.Bold))
+			prettyPrintOutReqs := func(reqs []*alpenhorn.OutgoingFriendRequest) {
 				tw := tabwriter.NewWriter(buf, 0, 0, 1, ' ', 0)
-				for _, req := range outReqs {
+				for _, req := range reqs {
 					confirm := ""
 					if req.Confirmation {
 						confirm = "(confirmation)"
@@ -232,6 +230,18 @@ var commands = map[string]Command{
 					fmt.Fprintf(tw, "  %s\t%s\t%s\n", req.Username, key, confirm)
 				}
 				tw.Flush()
+			}
+
+			outReqs := gc.alpenhornClient.GetOutgoingFriendRequests()
+			if len(outReqs) > 0 {
+				fmt.Fprintf(buf, "%s\n", ansi.Colorf("Outgoing Friend Requests", ansi.Bold))
+				prettyPrintOutReqs(outReqs)
+			}
+
+			sentReqs := gc.alpenhornClient.GetSentFriendRequests()
+			if len(sentReqs) > 0 {
+				fmt.Fprintf(buf, "%s\n", ansi.Colorf("Sent Friend Requests", ansi.Bold))
+				prettyPrintOutReqs(sentReqs)
 			}
 
 			friends := gc.alpenhornClient.GetFriends()
