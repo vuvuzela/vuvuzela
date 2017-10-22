@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"sort"
@@ -251,15 +252,38 @@ var commands = map[string]Command{
 			} else {
 				tw := tabwriter.NewWriter(buf, 0, 0, 1, ' ', 0)
 				for _, friend := range friends {
-					keyRound, key := friend.UnsafeKeywheelState()
-					keyStr := base64.RawURLEncoding.EncodeToString(key[:])[:12]
-					fmt.Fprintf(tw, "  %s\t{%d|%s...}\n", friend.Username, keyRound, keyStr)
+					fmt.Fprintf(tw, "  %s\n", friend.Username)
 				}
 				tw.Flush()
 			}
 			fmt.Fprintf(buf, "\n")
 
 			gc.Printf("%s", buf.String())
+
+			return nil
+		},
+	},
+
+	"debugfriend": {
+		Help: "/debugfriend <username> prints a friend's keywheel state.",
+		Handler: func(gc *GuiClient, args []string) error {
+			if len(args) == 0 {
+				gc.Warnf("Missing username\n")
+				return nil
+			}
+			username := args[0]
+			friend := gc.alpenhornClient.GetFriend(username)
+			if friend == nil {
+				gc.Warnf("%q is not in your friends list!\n")
+				return nil
+			}
+
+			keyRound, _ := friend.UnsafeKeywheelState()
+			keyRound = (keyRound + 100) / 100 * 100
+			key := sha256.Sum256(friend.SessionKey(keyRound)[:])
+			keyStr := base64.RawURLEncoding.EncodeToString(key[:])[:12]
+			gc.Warnf("Keywheel for %q: {%d|%s...}\n", username, keyRound, keyStr)
+			gc.Warnf("You and your friend should have the same keywheel for eachother.\n")
 
 			return nil
 		},
