@@ -14,6 +14,7 @@ import (
 	"golang.org/x/crypto/nacl/secretbox"
 
 	"vuvuzela.io/alpenhorn/log"
+	"vuvuzela.io/alpenhorn/log/ansi"
 	"vuvuzela.io/vuvuzela/convo"
 )
 
@@ -96,7 +97,7 @@ func (c *Conversation) QueueTextMessage(msg []byte) {
 	}
 
 	if ok {
-		c.Printf("<%s> %s\n", c.myUsername, msg)
+		c.Printf("%s %s\n", ansi.Colorf("<"+c.myUsername+">", ansi.Bold), msg)
 	} else {
 		c.Warnf("Queue full, message not sent to %s: %s\n", c.peerUsername, msg)
 	}
