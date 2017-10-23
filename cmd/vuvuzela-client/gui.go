@@ -510,54 +510,81 @@ func (gc *GuiClient) tabComplete(_ *gocui.Gui, v *gocui.View) error {
 	if line == "" {
 		return nil
 	}
-
-	if line[0] != '/' || line[len(line)-1] == ' ' {
+	if line[0] != '/' {
 		return nil
 	}
 
-	choices := make([]string, 0)
-	args := strings.Fields(line[1:])
-	if len(args) == 0 {
-		return nil
-	}
+	args := strings.Split(line[1:], " ")
 
+	var uniqChoices []string
 	if len(args) == 1 {
 		for cmd, _ := range commands {
-			choices = append(choices, cmd)
+			uniqChoices = append(uniqChoices, cmd)
 		}
 	} else {
-		for _, friend := range gc.alpenhornClient.GetFriends() {
-			choices = append(choices, friend.Username)
+		cmd := args[0]
+		var choices []string
+		switch cmd {
+		case "w":
+			gc.mu.Lock()
+			for _, convo := range gc.conversations {
+				choices = append(choices, convo.peerUsername)
+			}
+			gc.mu.Unlock()
+		}
+		switch cmd {
+		case "call", "delfriend", "debugfriend", "addfriend", "w":
+			for _, friend := range gc.alpenhornClient.GetFriends() {
+				choices = append(choices, friend.Username)
+			}
+		}
+		switch cmd {
+		case "approve":
+			for _, req := range gc.alpenhornClient.GetIncomingFriendRequests() {
+				choices = append(choices, req.Username)
+			}
+		}
+
+		if len(choices) == 0 {
+			return nil
+		}
+
+		// remove dupes
+		seen := make(map[string]bool)
+		for _, choice := range choices {
+			if !seen[choice] {
+				uniqChoices = append(uniqChoices, choice)
+				seen[choice] = true
+			}
 		}
 	}
 
 	prefix := args[len(args)-1]
-	completion, match := completePrefix(prefix, choices)
-	if !match {
+	matches := completePrefix(prefix, uniqChoices)
+	if len(matches) == 0 {
 		return nil
 	}
+	if len(matches) > 1 {
+		sort.Strings(matches)
+		gc.Warnf("Choices: %v\n", matches)
+		return nil
+	}
+	match := matches[0]
+	completion := match[len(prefix):]
 
 	fmt.Fprintf(v, "%s ", completion)
 	v.MoveCursor(len(completion)+1, 0, true)
 	return nil
 }
 
-func completePrefix(prefix string, choices []string) (string, bool) {
-	match := prefix
-	nmatches := 0
-
+func completePrefix(prefix string, choices []string) []string {
+	matches := make([]string, 0)
 	for _, choice := range choices {
 		if strings.HasPrefix(choice, prefix) {
-			match = choice[len(prefix):]
-			nmatches += 1
+			matches = append(matches, choice)
 		}
 	}
-
-	if nmatches == 1 {
-		return match, true
-	} else {
-		return "", false
-	}
+	return matches
 }
 
 func (gc *GuiClient) readLine(_ *gocui.Gui, v *gocui.View) error {
