@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"text/tabwriter"
@@ -157,11 +158,16 @@ var commands = map[string]Command{
 	},
 
 	"w": {
-		Help: "/w <username> goes to the convo window for the given username.",
+		Help: "/w (<username>|<number>) creates or jumps to a window.",
 		Handler: func(gc *GuiClient, args []string) error {
 			if len(args) == 0 {
-				gc.Warnf("Missing username\n")
+				gc.Warnf("Missing username or window number\n")
 				return nil
+			}
+
+			winNum, err := strconv.ParseUint(args[0], 10, 0)
+			if err == nil {
+				return gc.focusConvoIndex(int(winNum) - 1)
 			}
 
 			username := args[0]
