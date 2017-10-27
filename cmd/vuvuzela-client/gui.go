@@ -165,8 +165,11 @@ var commands = map[string]Command{
 				return nil
 			}
 
-			winNum, err := strconv.ParseUint(args[0], 10, 0)
+			winNum, err := strconv.ParseInt(args[0], 10, 0)
 			if err == nil {
+				if winNum < 0 {
+					return nil
+				}
 				return gc.focusConvoIndex(int(winNum) - 1)
 			}
 
