@@ -27,12 +27,21 @@ func (gc *GuiClient) UnexpectedSigningKey(in *alpenhorn.IncomingFriendRequest, o
 	gc.WarnfSync("Unexpected signing key: %s\n", in.Username)
 }
 
-func (gc *GuiClient) SentCall(call *alpenhorn.OutgoingCall) {
+func (gc *GuiClient) SendingCall(call *alpenhorn.OutgoingCall) {
 	convo := gc.getOrCreateConvo(call.Username)
-	convo.WarnfSync("Sent call: %s\n", call.Username)
-	if !gc.activateConvo(convo, call.SessionKey()) {
+	convo.WarnfSync("Calling %s ...\n", call.Username)
+	round := gc.latestConvoRound()
+	epochStart, intent := stdRoundSyncer.outgoingCallConvoRound(round)
+
+	call.UpdateIntent(intent)
+
+	wheel := &keywheelStart{
+		sessionKey: call.SessionKey(),
+		convoRound: epochStart,
+	}
+	if !gc.activateConvo(convo, wheel) {
 		convo.Lock()
-		convo.pendingCall = call
+		convo.pendingCall = wheel
 		convo.Unlock()
 		convo.WarnfSync("Too many active conversations! Hang up another convo and type /answer to answer the call.\n")
 	}
@@ -41,9 +50,15 @@ func (gc *GuiClient) SentCall(call *alpenhorn.OutgoingCall) {
 func (gc *GuiClient) ReceivedCall(call *alpenhorn.IncomingCall) {
 	convo := gc.getOrCreateConvo(call.Username)
 	convo.WarnfSync("Received call: %s\n", call.Username)
-	if !gc.activateConvo(convo, call.SessionKey) {
+
+	round := gc.latestConvoRound()
+	wheel := &keywheelStart{
+		sessionKey: call.SessionKey,
+		convoRound: stdRoundSyncer.incomingCallConvoRound(round, call.Intent),
+	}
+	if !gc.activateConvo(convo, wheel) {
 		convo.Lock()
-		convo.pendingCall = call
+		convo.pendingCall = wheel
 		convo.Unlock()
 		convo.WarnfSync("Too many active conversations! Hang up another convo and type /answer to answer the call.\n")
 	}

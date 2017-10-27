@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"text/tabwriter"
 	"time"
 
@@ -39,6 +40,9 @@ type GuiClient struct {
 	active        map[*Conversation]bool
 	pendingRounds map[uint32]pendingRound
 	mainUnread    bool
+
+	// updated atomically
+	lastSeenConvoRound uint32
 }
 
 type pendingRound struct {
@@ -46,6 +50,8 @@ type pendingRound struct {
 }
 
 func (gc *GuiClient) Outgoing(round uint32) []*convo.DeadDropMessage {
+	atomic.StoreUint32(&gc.lastSeenConvoRound, round)
+
 	out := make([]*convo.DeadDropMessage, 0, NumOutgoing)
 
 	gc.mu.Lock()
@@ -71,6 +77,10 @@ func (gc *GuiClient) Outgoing(round uint32) []*convo.DeadDropMessage {
 	return out
 }
 
+func (gc *GuiClient) latestConvoRound() uint32 {
+	return atomic.LoadUint32(&gc.lastSeenConvoRound)
+}
+
 func (gc *GuiClient) Replies(round uint32, replies [][]byte) {
 	gc.mu.Lock()
 	st := gc.pendingRounds[round]
@@ -81,16 +91,18 @@ func (gc *GuiClient) Replies(round uint32, replies [][]byte) {
 	}
 }
 
-func (gc *GuiClient) activateConvo(convo *Conversation, key *[32]byte) bool {
+func (gc *GuiClient) activateConvo(convo *Conversation, wheel *keywheelStart) bool {
 	gc.mu.Lock()
 	defer gc.mu.Unlock()
 
 	if len(gc.active) < NumOutgoing {
 		gc.active[convo] = true
 		convo.Lock()
-		convo.secretKey = key
+		convo.sessionKey = wheel.sessionKey
+		convo.sessionKeyRound = wheel.convoRound
 		convo.lastPeerResponding = false
 		convo.lastLatency = 0
+		convo.pendingCall = nil
 		convo.Unlock()
 		return true
 	}
@@ -328,7 +340,7 @@ var commands = map[string]Command{
 				return nil
 			}
 			_ = friend.Call(0)
-			convo.Warnf("Calling %s ...\n", convo.peerUsername)
+			convo.Warnf("Queued call: %s\n", convo.peerUsername)
 
 			return nil
 		},
@@ -367,23 +379,14 @@ var commands = map[string]Command{
 				return nil
 			}
 
-			if convo.pendingCall == nil {
+			convo.Lock()
+			pendingCall := convo.pendingCall
+			convo.Unlock()
+			if pendingCall == nil {
 				convo.Warnf("No pending call.\n")
 				return nil
 			}
-			var sessionKey *[32]byte
-			switch call := convo.pendingCall.(type) {
-			case *alpenhorn.IncomingCall:
-				sessionKey = call.SessionKey
-			case *alpenhorn.OutgoingCall:
-				sessionKey = call.SessionKey()
-			default:
-				panic(fmt.Sprintf("unknown call type: %T", call))
-			}
-			if gc.activateConvo(convo, sessionKey) {
-				convo.Lock()
-				convo.pendingCall = nil
-				convo.Unlock()
+			if gc.activateConvo(convo, pendingCall) {
 				convo.Warnf("Now talking to %q\n", convo.peerUsername)
 			} else {
 				convo.Warnf("Too many active conversations! Hang up another convo and try again.\n")

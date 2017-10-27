@@ -5,22 +5,26 @@ import (
 	"crypto/rand"
 	"testing"
 	"time"
+
+	"github.com/davidlazar/go-crypto/encoding/base32"
 )
 
 func TestSoloConversation(t *testing.T) {
 	convo := &Conversation{
-		myUsername:   "alice@example.org",
-		peerUsername: "alice@example.org",
-		secretKey:    new([32]byte),
+		myUsername:      "alice@example.org",
+		peerUsername:    "alice@example.org",
+		sessionKey:      new([32]byte),
+		sessionKeyRound: 23,
 	}
-	rand.Read(convo.secretKey[:])
+	rand.Read(convo.sessionKey[:])
 
 	msg := make([]byte, 256)
 	rand.Read(msg)
 
 	var round uint32 = 42
-	ctxt := convo.Seal(msg, round)
-	xmsg, ok := convo.Open(ctxt, round)
+	convo.rollAndReplaceKey(round)
+	ctxt := convo.Seal(msg, round, convo.sessionKey)
+	xmsg, ok := convo.Open(ctxt, round, convo.sessionKey)
 	if !ok {
 		t.Fatalf("failed to decrypt message")
 	}
@@ -44,5 +48,39 @@ func TestMarshalConvoMessage(t *testing.T) {
 	xtsm := xcm.Body.(*TimestampMessage)
 	if xtsm.Timestamp.Unix() != now.Unix() {
 		t.Fatalf("timestamps don't match")
+	}
+}
+
+func TestRollKey(t *testing.T) {
+	k0 := new([32]byte)
+	k1 := rollKey(k0, 0, 1)
+	k2 := rollKey(k1, 1, 2)
+
+	k2a := rollKey(k0, 0, 2)
+
+	if !bytes.Equal(k2[:], k2a[:]) {
+		t.Fatalf("%v != %v", k2, k2a)
+	}
+
+	k2strExpected := "8sjdg6x3a7g78293d5n470y20myqhj723bp0687637sdt89gkrq0"
+	k2strActual := base32.EncodeToString(k2[:])
+	if k2strActual != k2strExpected {
+		t.Fatalf("got %q, want %q", k2strActual, k2strExpected)
+	}
+}
+
+func TestSyncConvoRound(t *testing.T) {
+	syncer := roundSyncer{
+		roundingIncrement: 1000,
+	}
+
+	for i := uint32(0); i < 10000; i++ {
+		out, intent := syncer.outgoingCallConvoRound(i)
+		for j := i; j < i+1001; j++ {
+			in := syncer.incomingCallConvoRound(j, intent)
+			if out != in {
+				t.Fatalf("i=%d -> out=%d intent=%d :: j=%d -> in=%d", i, out, intent, j, in)
+			}
+		}
 	}
 }

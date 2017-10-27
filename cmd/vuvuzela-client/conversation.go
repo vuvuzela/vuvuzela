@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/binary"
 	"fmt"
 	"strings"
@@ -25,10 +26,12 @@ type Conversation struct {
 	gc *GuiClient
 
 	sync.RWMutex
-	secretKey    *[32]byte
-	outQueue     chan []byte
-	sentMessages map[uint32][]byte
-	pendingCall  interface{} // either an IncomingCall or OutgoingCall
+	outQueue    chan []byte
+	rounds      map[uint32]*convoRound
+	pendingCall *keywheelStart
+
+	sessionKey      *[32]byte
+	sessionKeyRound uint32
 
 	lastPeerResponding bool
 	lastLatency        time.Duration
@@ -40,7 +43,12 @@ type Conversation struct {
 func (c *Conversation) Init() {
 	c.outQueue = make(chan []byte, 64)
 	c.lastPeerResponding = false
-	c.sentMessages = make(map[uint32][]byte)
+	c.rounds = make(map[uint32]*convoRound)
+}
+
+type convoRound struct {
+	sentMessage []byte
+	roundKey    *[32]byte
 }
 
 func (c *Conversation) ViewName() string {
@@ -171,16 +179,21 @@ func (c *Conversation) NextMessage(round uint32) *convo.DeadDropMessage {
 	}
 	msgdata := msg.Marshal()
 
+	roundKey := c.rollAndReplaceKey(round)
+	ctxt := c.Seal(msgdata[:], round, roundKey)
+
 	var encmsg [convo.SizeEncryptedMessageBody]byte
-	ctxt := c.Seal(msgdata[:], round)
 	copy(encmsg[:], ctxt)
 
 	c.Lock()
-	c.sentMessages[round] = encmsg[:]
+	c.rounds[round] = &convoRound{
+		sentMessage: encmsg[:],
+		roundKey:    roundKey,
+	}
 	c.Unlock()
 
 	return &convo.DeadDropMessage{
-		DeadDrop:         c.deadDrop(round),
+		DeadDrop:         c.deadDrop(round, roundKey),
 		EncryptedMessage: encmsg,
 	}
 }
@@ -197,19 +210,25 @@ func (c *Conversation) Reply(round uint32, encmsg []byte) {
 	}()
 
 	c.Lock()
-	sentMessage, ok := c.sentMessages[round]
-	delete(c.sentMessages, round)
+	st, ok := c.rounds[round]
+	delete(c.rounds, round)
+	// Delete old rounds to ensure forward secrecy.
+	for r := range c.rounds {
+		if r < round-10 {
+			delete(c.rounds, r)
+		}
+	}
 	c.Unlock()
 	if !ok {
 		rlog.Error("round not found")
 		return
 	}
 
-	if bytes.Compare(encmsg, sentMessage) == 0 && !c.Solo() {
+	if bytes.Compare(encmsg, st.sentMessage) == 0 && !c.Solo() {
 		return
 	}
 
-	msgdata, ok := c.Open(encmsg, round)
+	msgdata, ok := c.Open(encmsg, round, st.roundKey)
 	if !ok {
 		rlog.Error("decrypting peer message failed")
 		return
@@ -258,27 +277,102 @@ func (c *Conversation) Solo() bool {
 	return c.peerUsername == c.myUsername
 }
 
-func (c *Conversation) Seal(message []byte, round uint32) []byte {
+func (c *Conversation) Seal(message []byte, round uint32, roundKey *[32]byte) []byte {
 	var nonce [24]byte
 	binary.BigEndian.PutUint32(nonce[:], round)
 	nameHash := sha256.Sum256([]byte(c.peerUsername))
 	copy(nonce[4:], nameHash[:16])
 
-	ctxt := secretbox.Seal(nil, message, &nonce, c.secretKey)
+	ctxt := secretbox.Seal(nil, message, &nonce, roundKey)
 	return ctxt
 }
 
-func (c *Conversation) Open(ctxt []byte, round uint32) ([]byte, bool) {
+func (c *Conversation) Open(ctxt []byte, round uint32, roundKey *[32]byte) ([]byte, bool) {
 	var nonce [24]byte
 	binary.BigEndian.PutUint32(nonce[:], round)
 	nameHash := sha256.Sum256([]byte(c.myUsername))
 	copy(nonce[4:], nameHash[:16])
 
-	return secretbox.Open(nil, ctxt, &nonce, c.secretKey)
+	return secretbox.Open(nil, ctxt, &nonce, roundKey)
 }
 
-func (c *Conversation) deadDrop(round uint32) (id convo.DeadDrop) {
-	h := hmac.New(sha256.New, c.secretKey[:])
+type keywheelStart struct {
+	sessionKey *[32]byte
+	convoRound uint32
+}
+
+func (c *Conversation) rollAndReplaceKey(targetRound uint32) *[32]byte {
+	c.Lock()
+	key, keyRound := c.sessionKey, c.sessionKeyRound
+	c.Unlock()
+
+	newKey := rollKey(key, keyRound, targetRound)
+	if newKey == nil {
+		return nil
+	}
+
+	c.Lock()
+	c.sessionKey, c.sessionKeyRound = newKey, targetRound
+	c.Unlock()
+
+	return newKey
+}
+
+func rollKey(currentKey *[32]byte, keyRound, targetRound uint32) *[32]byte {
+	if keyRound > targetRound {
+		return nil
+	}
+
+	newKey := new([32]byte)
+	copy(newKey[:], currentKey[:])
+
+	hash := sha512.New512_256()
+	key := newKey[:]
+	for r := keyRound; r < targetRound; r++ {
+		hash.Reset()
+		binary.Write(hash, binary.BigEndian, r)
+		hash.Write(key)
+		key = hash.Sum(key[:0])
+	}
+
+	return newKey
+}
+
+// roundSyncer is used to agree on a past convo round, which is used to
+// bootstrap a convo's keywheel for forward secrecy. The sender calls
+// outgoingCallConvoRound and the receiver calls incomingCallConvoRound.
+// For 0 <= X <= roundingIncrement, the following should hold:
+//   agreedRoundSender, intent := outgoingCallConvoRound(r)
+//   agreedRoundReceiver := incomingCallConvoRound(r+X, intent)
+//   agreedRoundSender == agreedRoundReceiver
+type roundSyncer struct {
+	roundingIncrement uint32
+}
+
+var stdRoundSyncer = roundSyncer{
+	roundingIncrement: 10000,
+}
+
+func (rs roundSyncer) outgoingCallConvoRound(latestRound uint32) (round uint32, intent int) {
+	return rs.epochStart(latestRound)
+}
+
+func (rs roundSyncer) incomingCallConvoRound(latestRound uint32, intent int) uint32 {
+	epochStart, currIntent := rs.epochStart(latestRound)
+	if currIntent == intent {
+		return epochStart
+	}
+	return epochStart - rs.roundingIncrement
+}
+
+func (rs roundSyncer) epochStart(round uint32) (uint32, int) {
+	c := rs.roundingIncrement
+	intent := int((round / c) % 2)
+	return round / c * c, intent
+}
+
+func (c *Conversation) deadDrop(round uint32, roundKey *[32]byte) (id convo.DeadDrop) {
+	h := hmac.New(sha256.New, roundKey[:])
 	h.Write([]byte("DeadDrop"))
 	binary.Write(h, binary.BigEndian, round)
 	r := h.Sum(nil)
