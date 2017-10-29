@@ -84,6 +84,7 @@ func (gc *GuiClient) latestConvoRound() uint32 {
 func (gc *GuiClient) Replies(round uint32, replies [][]byte) {
 	gc.mu.Lock()
 	st := gc.pendingRounds[round]
+	delete(gc.pendingRounds, round)
 	gc.mu.Unlock()
 
 	for i, convo := range st.activeConvos {
