@@ -49,6 +49,7 @@ func (c *Conversation) Init() {
 type convoRound struct {
 	sentMessage []byte
 	roundKey    *[32]byte
+	created     time.Time
 }
 
 func (c *Conversation) ViewName() string {
@@ -64,6 +65,7 @@ type TextMessage struct {
 	Message []byte
 }
 
+// TimestampMessages were previously used for computing end-to-end latency.
 type TimestampMessage struct {
 	Timestamp time.Time
 }
@@ -189,6 +191,7 @@ func (c *Conversation) NextMessage(round uint32) *convo.DeadDropMessage {
 	c.rounds[round] = &convoRound{
 		sentMessage: encmsg[:],
 		roundKey:    roundKey,
+		created:     time.Now(),
 	}
 	c.Unlock()
 
@@ -241,16 +244,16 @@ func (c *Conversation) Reply(round uint32, encmsg []byte) {
 	}
 
 	responding = true
+	c.Lock()
+	c.lastLatency = time.Now().Sub(st.created)
+	c.Unlock()
 
 	switch m := msg.Body.(type) {
 	case *TextMessage:
 		s := strings.TrimRight(string(m.Message), "\x00")
 		c.PrintfSync("<%s> %s\n", c.peerUsername, s)
 	case *TimestampMessage:
-		latency := time.Now().Sub(m.Timestamp)
-		c.Lock()
-		c.lastLatency = latency
-		c.Unlock()
+		// ignore it
 	}
 }
 
