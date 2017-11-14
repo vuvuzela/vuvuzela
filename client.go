@@ -27,10 +27,9 @@ type Client struct {
 	ConfigClient *config.Client
 	Handler      ConvoHandler
 
-	conn typesocket.Conn
-
 	mu     sync.Mutex
 	rounds map[uint32]*roundState
+	conn   typesocket.Conn
 
 	convoConfig     *config.SignedConfig
 	convoConfigHash string
@@ -47,30 +46,49 @@ type ConvoHandler interface {
 	Replies(round uint32, messages [][]byte)
 }
 
-func (c *Client) Connect() error {
-	// TODO check if already connected
+func (c *Client) ConnectConvo() (chan error, error) {
 	if c.Handler == nil {
-		return fmt.Errorf("no convo handler")
+		return nil, errors.New("no convo handler")
 	}
 
+	c.mu.Lock()
 	if c.rounds == nil {
 		c.rounds = make(map[uint32]*roundState)
 	}
+	c.mu.Unlock()
 
 	// Fetch the current config to get the coordinator's key and address.
 	convoConfig, err := c.ConfigClient.CurrentConfig("Convo")
 	if err != nil {
-		return errors.Wrap(err, "fetching latest convo config")
+		return nil, errors.Wrap(err, "fetching latest convo config")
 	}
 	convoInner := convoConfig.Inner.(*convo.ConvoConfig)
 
 	wsAddr := fmt.Sprintf("wss://%s/convo/ws", convoInner.Coordinator.Address)
-	conn, err := typesocket.Dial(wsAddr, convoInner.Coordinator.Key, c.convoMux())
+	conn, err := typesocket.Dial(wsAddr, convoInner.Coordinator.Key)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	c.conn = conn
 
+	c.mu.Lock()
+	c.conn = conn
+	c.mu.Unlock()
+
+	disconnect := make(chan error, 1)
+	go func() {
+		disconnect <- conn.Serve(c.convoMux())
+	}()
+
+	return disconnect, nil
+}
+
+func (c *Client) CloseConvo() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.conn != nil {
+		return c.conn.Close()
+	}
 	return nil
 }
 
