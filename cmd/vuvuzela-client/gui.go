@@ -20,7 +20,6 @@ import (
 	"vuvuzela.io/alpenhorn"
 	"vuvuzela.io/alpenhorn/log"
 	"vuvuzela.io/alpenhorn/log/ansi"
-	"vuvuzela.io/alpenhorn/pkg"
 	"vuvuzela.io/vuvuzela"
 	"vuvuzela.io/vuvuzela/convo"
 )
@@ -43,6 +42,8 @@ type GuiClient struct {
 
 	// updated atomically
 	lastSeenConvoRound uint32
+
+	connectOnce sync.Once
 }
 
 type pendingRound struct {
@@ -858,39 +859,54 @@ func quit(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (gc *GuiClient) Connect() {
-	gc.Register()
+	gc.connectOnce.Do(func() {
+		go gc.addFriendLoop()
+		go gc.dialingLoop()
+		go gc.convoLoop()
+	})
+}
 
-	if err := gc.alpenhornClient.Connect(); err != nil {
-		gc.WarnfSync("Failed to connect to alpenhorn service: %s\n", err)
-	} else {
-		gc.WarnfSync("Connected to alpenhorn service.\n")
-	}
+const connectRetry = 10 * time.Second
 
-	if err := gc.convoClient.Connect(); err != nil {
-		gc.WarnfSync("Failed to connect to convo service: %s\n", err)
-	} else {
-		gc.WarnfSync("Connected to convo service.\n")
+func (gc *GuiClient) addFriendLoop() {
+	for {
+		disconnect, err := gc.alpenhornClient.ConnectAddFriend()
+		if err != nil {
+			time.Sleep(connectRetry)
+			continue
+		}
+		gc.WarnfSync("Connected to AddFriend service!\n")
+		err = <-disconnect
+		gc.WarnfSync("Disconnected from AddFriend service: %s (retrying every %s)\n", err, connectRetry)
+		time.Sleep(connectRetry)
 	}
 }
 
-func (gc *GuiClient) Register() {
-	stats := gc.alpenhornClient.PKGStatus()
-	for _, st := range stats {
-		if st.Error == nil {
+func (gc *GuiClient) dialingLoop() {
+	for {
+		disconnect, err := gc.alpenhornClient.ConnectDialing()
+		if err != nil {
+			time.Sleep(connectRetry)
 			continue
 		}
+		gc.WarnfSync("Connected to Dialing service!\n")
+		err = <-disconnect
+		gc.WarnfSync("Disconnected from Dialing service: %s (retrying every %s)\n", err, connectRetry)
+		time.Sleep(connectRetry)
+	}
+}
 
-		pkgErr, ok := st.Error.(pkg.Error)
-		if ok && pkgErr.Code == pkg.ErrNotRegistered {
-			err := gc.alpenhornClient.Register(st.Server)
-			if err != nil {
-				gc.WarnfSync("Failed to register with PKG %s: %s\n", st.Server.Address, err)
-				continue
-			}
-			gc.WarnfSync("Registered %q with PKG %s\n", gc.alpenhornClient.Username, st.Server.Address)
-		} else {
-			gc.WarnfSync("Failed to check account status with PKG %s: %s\n", st.Server.Address, st.Error)
+func (gc *GuiClient) convoLoop() {
+	for {
+		disconnect, err := gc.convoClient.ConnectConvo()
+		if err != nil {
+			time.Sleep(connectRetry)
+			continue
 		}
+		gc.WarnfSync("Connected to Convo service!\n")
+		err = <-disconnect
+		gc.WarnfSync("Disconnected from Convo service: %s (retrying every %s)\n", err, connectRetry)
+		time.Sleep(connectRetry)
 	}
 }
 

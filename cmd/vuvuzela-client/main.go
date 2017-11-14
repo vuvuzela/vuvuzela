@@ -33,7 +33,8 @@ func main() {
 	}
 
 	alpStatePath := filepath.Join(confHome, fmt.Sprintf("%s-alpenhorn-client-state", *username))
-	alpenhornClient, err := alpenhorn.LoadClient(alpStatePath)
+	keywheelPath := filepath.Join(confHome, fmt.Sprintf("%s-keywheel", *username))
+	alpenhornClient, err := alpenhorn.LoadClient(alpStatePath, keywheelPath)
 	if os.IsNotExist(err) {
 		fmt.Printf("No Alpenhorn client state found for username %s in %s.\n", *username, confHome)
 		fmt.Printf("Use vuvuzela-keygen to generate new client state.\n")
@@ -44,8 +45,6 @@ func main() {
 		return
 	}
 
-	keywheelPath := filepath.Join(confHome, fmt.Sprintf("%s-keywheel", *username))
-	alpenhornClient.KeywheelPersistPath = keywheelPath
 	alpenhornClient.ConfigClient = config.StdClient
 
 	vzStatePath := filepath.Join(confHome, fmt.Sprintf("%s-vuvuzela-client-state", *username))
