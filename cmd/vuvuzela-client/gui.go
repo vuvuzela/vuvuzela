@@ -745,6 +745,46 @@ func setConvoView(g *gocui.Gui, name string, maxX, maxY int) error {
 	return nil
 }
 
+func (gc *GuiClient) scrollUp(_ *gocui.Gui, _ *gocui.View) error {
+	gc.scrollCurrentView(-1)
+	// Ignore error, otherwise scrolling up past the top would cause a panic.
+	return nil
+}
+func (gc *GuiClient) scrollDown(_ *gocui.Gui, _ *gocui.View) error {
+	gc.scrollCurrentView(1)
+	return nil
+}
+func (gc *GuiClient) scrollCurrentView(dy int) error {
+	gc.mu.Lock()
+	convo := gc.selectedConvo
+	gc.mu.Unlock()
+
+	viewName := "main"
+	if convo != nil {
+		viewName = convo.ViewName()
+	}
+	v, err := gc.gui.View(viewName)
+	if err != nil {
+		return err
+	}
+
+	// Scrolling logic copied from https://github.com/jroimartin/gocui/issues/84
+	_, y := v.Size()
+	ox, oy := v.Origin()
+
+	// If we're at the bottom...
+	if oy+dy > strings.Count(v.ViewBuffer(), "\n")-y-1 {
+		// Set autoscroll to normal again.
+		v.Autoscroll = true
+	} else {
+		// Set autoscroll to false and scroll.
+		v.Autoscroll = false
+		return v.SetOrigin(ox, oy+dy)
+	}
+
+	return nil
+}
+
 func (gc *GuiClient) layout(g *gocui.Gui) error {
 	maxX, maxY := g.Size()
 	if err := setConvoView(g, "main", maxX, maxY); err != nil {
@@ -804,7 +844,21 @@ func (gc *GuiClient) layout(g *gocui.Gui) error {
 		roundLatency = fmt.Sprintf("  [round: %s]  [latency: %s]  ", round, latency)
 	}
 
-	fmt.Fprintf(sv, " [%s]  [%s]%s", gc.myName, menu, roundLatency)
+	// Indicate if the current window is scrolled up in the status bar.
+	viewName := "main"
+	if gc.selectedConvo != nil {
+		viewName = gc.selectedConvo.ViewName()
+	}
+	focusedView, err := g.View(viewName)
+	if err != nil {
+		return err
+	}
+	more := ""
+	if !focusedView.Autoscroll {
+		more = "-MORE-"
+	}
+
+	fmt.Fprintf(sv, " [%s]  [%s]%s %s", gc.myName, menu, roundLatency, ansi.Colorf(more, ansi.Yellow, ansi.Bold))
 
 	partner := "vuvuzela"
 	if gc.selectedConvo != nil {
@@ -938,6 +992,13 @@ func (gc *GuiClient) Run() {
 	if err := gui.SetKeybinding("input", gocui.KeyTab, gocui.ModNone, gc.tabComplete); err != nil {
 		panic(err)
 	}
+	if err := gui.SetKeybinding("", gocui.KeyPgup, gocui.ModNone, gc.scrollUp); err != nil {
+		panic(err)
+	}
+	if err := gui.SetKeybinding("", gocui.KeyPgdn, gocui.ModNone, gc.scrollDown); err != nil {
+		panic(err)
+	}
+
 	gui.Cursor = true
 	gui.BgColor = gocui.ColorDefault
 	gui.FgColor = gocui.ColorDefault
