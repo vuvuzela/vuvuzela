@@ -135,15 +135,6 @@ func main() {
 		},
 	}
 
-	/*
-		// Histogram is disabled for now since the chain is dynamic:
-		// we might stop being the last server at any moment.
-		if lastServer {
-			histogram := &Histogram{Mu: conf.Noise.Mu, NumServers: len(mixers)}
-			go histogram.run(mixServer.AccessCounts)
-		}
-	*/
-
 	if conf.DebugAddr != "" {
 		go func() {
 			log.Fatal(http.ListenAndServe(conf.DebugAddr, nil))
