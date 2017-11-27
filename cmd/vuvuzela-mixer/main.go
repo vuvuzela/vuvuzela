@@ -16,13 +16,13 @@ import (
 	"runtime"
 	"text/template"
 
-	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/ed25519"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
 	"vuvuzela.io/alpenhorn/edtls"
 	"vuvuzela.io/alpenhorn/encoding/toml"
+	"vuvuzela.io/alpenhorn/log"
 	"vuvuzela.io/crypto/rand"
 	"vuvuzela.io/vuvuzela/convo"
 	"vuvuzela.io/vuvuzela/mixnet"
