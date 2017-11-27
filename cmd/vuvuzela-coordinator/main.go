@@ -18,12 +18,12 @@ import (
 	"text/template"
 	"time"
 
-	log "github.com/sirupsen/logrus"
 	"golang.org/x/crypto/ed25519"
 
 	"vuvuzela.io/alpenhorn/config"
 	"vuvuzela.io/alpenhorn/edtls"
 	"vuvuzela.io/alpenhorn/encoding/toml"
+	"vuvuzela.io/alpenhorn/log"
 	"vuvuzela.io/vuvuzela/coordinator"
 )
 
