@@ -25,6 +25,7 @@ import (
 	"vuvuzela.io/alpenhorn/encoding/toml"
 	"vuvuzela.io/alpenhorn/log"
 	"vuvuzela.io/vuvuzela/coordinator"
+	"vuvuzela.io/vuvuzela/internal/vzlog"
 )
 
 var (
@@ -34,7 +35,9 @@ var (
 type Config struct {
 	PublicKey  ed25519.PublicKey
 	PrivateKey ed25519.PrivateKey
+
 	ListenAddr string
+	LogsDir    string
 
 	RoundDelay time.Duration
 	MixWait    time.Duration
@@ -48,7 +51,9 @@ const confTemplate = `# Vuvuzela coordinator (entry) server config
 
 publicKey  = {{.PublicKey | base32 | printf "%q"}}
 privateKey = {{.PrivateKey | base32 | printf "%q"}}
+
 listenAddr = {{.ListenAddr | printf "%q"}}
+logsDir = {{.LogsDir | printf "%q" }}
 
 roundDelay = {{.RoundDelay | printf "%q"}}
 
@@ -113,7 +118,9 @@ func writeNewConfig(path string) {
 	conf := &Config{
 		PublicKey:  publicKey,
 		PrivateKey: privateKey,
+
 		ListenAddr: "0.0.0.0:8000",
+		LogsDir:    vzlog.DefaultLogsDir("vuvuzela-coordinator", publicKey),
 
 		RoundDelay: 5 * time.Second,
 		MixWait:    2 * time.Second,
@@ -159,6 +166,11 @@ func main() {
 		log.Fatalf("error parsing config %s: %s", confPath, err)
 	}
 
+	logHandler, err := vzlog.NewProductionOutput(conf.LogsDir)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	coordinatorPresistPath := filepath.Join(confHome, "convo-coordinator-state")
 	convoServer := &coordinator.Server{
 		Service:    "Convo",
@@ -188,7 +200,10 @@ func main() {
 		log.Fatalf("edtls listen: %s", err)
 	}
 
-	log.Infof("Listening on: %s", conf.ListenAddr)
+	log.Infof("Listening on %q; logging to %s", conf.ListenAddr, logHandler.Name())
+	log.StdLogger.EntryHandler = logHandler
+	log.Infof("Listening on %q", conf.ListenAddr)
+
 	err = http.Serve(listener, nil)
 	if err != nil {
 		log.Fatal(err)

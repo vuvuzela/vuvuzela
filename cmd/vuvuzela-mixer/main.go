@@ -25,6 +25,7 @@ import (
 	"vuvuzela.io/alpenhorn/log"
 	"vuvuzela.io/crypto/rand"
 	"vuvuzela.io/vuvuzela/convo"
+	"vuvuzela.io/vuvuzela/internal/vzlog"
 	"vuvuzela.io/vuvuzela/mixnet"
 	pb "vuvuzela.io/vuvuzela/mixnet/convopb"
 )
@@ -37,6 +38,7 @@ var (
 type Config struct {
 	ListenAddr string
 	DebugAddr  string
+	LogsDir    string
 
 	PublicKey  ed25519.PublicKey
 	PrivateKey ed25519.PrivateKey
@@ -54,6 +56,7 @@ const confTemplate = `# Vuvuzela mixnet server config
 
 listenAddr = {{.ListenAddr | printf "%q"}}
 debugAddr = {{.DebugAddr | printf "%q" }}
+logsDir = {{.LogsDir | printf "%q" }}
 
 publicKey  = {{.PublicKey | base32 | printf "%q"}}
 privateKey = {{.PrivateKey | base32 | printf "%q"}}
@@ -74,6 +77,8 @@ func writeNewConfig() {
 	conf := &Config{
 		ListenAddr: "0.0.0.0:2718",
 		DebugAddr:  "0.0.0.0:6060",
+		LogsDir:    vzlog.DefaultLogsDir("vuvuzela-mixer", publicKey),
+
 		PublicKey:  publicKey,
 		PrivateKey: privateKey,
 
@@ -123,6 +128,11 @@ func main() {
 		log.Fatalf("error parsing config %q: %s", *confPath, err)
 	}
 
+	logHandler, err := vzlog.NewProductionOutput(conf.LogsDir)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	mixServer := &mixnet.Server{
 		SigningKey:     conf.PrivateKey,
 		CoordinatorKey: conf.CoordinatorKey,
@@ -148,7 +158,10 @@ func main() {
 
 	pb.RegisterMixnetServer(grpcServer, mixServer)
 
+	log.Infof("Listening on %q; logging to %s", conf.ListenAddr, logHandler.Name())
+	log.StdLogger.EntryHandler = logHandler
 	log.Infof("Listening on %q", conf.ListenAddr)
+
 	listener, err := net.Listen("tcp", conf.ListenAddr)
 	if err != nil {
 		log.Fatalf("net.Listen: %s", err)
