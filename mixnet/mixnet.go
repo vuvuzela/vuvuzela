@@ -405,8 +405,6 @@ func (srv *Server) CloseRound(ctx context.Context, req *pb.CloseRoundRequest) (*
 		return nil, err
 	}
 
-	log.WithFields(log.Fields{"rpc": "CloseRound", "round": req.Round}).Info()
-
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
@@ -416,7 +414,7 @@ func (srv *Server) CloseRound(ctx context.Context, req *pb.CloseRoundRequest) (*
 	st.closed = true
 
 	log.WithFields(log.Fields{
-		"rpc":    "Close",
+		"rpc":    "CloseRound",
 		"round":  req.Round,
 		"onions": len(st.incoming),
 	}).Info()
