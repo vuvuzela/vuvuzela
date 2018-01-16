@@ -228,7 +228,6 @@ func (srv *Server) loop() {
 			break
 		}
 
-		logger.Info("Running round")
 		srv.mu.Lock()
 		go srv.runRound(context.Background(), mixServers[0], round, srv.onions)
 		srv.onions = make([]onionBundle, 0, len(srv.onions))
@@ -275,8 +274,8 @@ func (srv *Server) runRound(ctx context.Context, firstServer mixnet.PublicServer
 		onions = append(onions, o.onions...)
 	}
 
-	logger := log.WithFields(log.Fields{"round": round})
-	logger.WithFields(log.Fields{"onions": len(onions)}).Info("start RunRound")
+	logger := log.WithFields(log.Fields{"round": round, "onions": len(onions)})
+	logger.Info("Start mixing")
 	start := time.Now()
 
 	replies, err := srv.mixnetClient.RunRound(ctx, firstServer, srv.Service, round, onions)
@@ -285,8 +284,9 @@ func (srv *Server) runRound(ctx context.Context, firstServer mixnet.PublicServer
 		srv.hub.Broadcast("error", RoundError{Round: round, Err: "server error"})
 		return
 	}
+
 	end := time.Now()
-	logger.WithFields(log.Fields{"duration": end.Sub(start)}).Info("end RunRound")
+	logger.WithFields(log.Fields{"duration": end.Sub(start)}).Info("Done mixing")
 
 	concurrency.ParallelFor(len(senders), func(p *concurrency.P) {
 		for i, ok := p.Next(); ok; i, ok = p.Next() {
