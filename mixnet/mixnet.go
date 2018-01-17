@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/ed25519"
 	"golang.org/x/crypto/nacl/box"
@@ -413,16 +414,17 @@ func (srv *Server) CloseRound(ctx context.Context, req *pb.CloseRoundRequest) (*
 	}
 	st.closed = true
 
-	log.WithFields(log.Fields{
+	logger := log.WithFields(log.Fields{
 		"rpc":    "CloseRound",
 		"round":  req.Round,
 		"onions": len(st.incoming),
-	}).Info()
+	})
 
 	srv.filterIncoming(st)
 
 	// if not last server
 	if st.myPos < len(st.chain)-1 {
+		start := time.Now()
 		<-st.noiseDone
 		numNonNoise := len(st.incoming)
 		outgoing := append(st.incoming, st.noise...)
@@ -445,8 +447,14 @@ func (srv *Server) CloseRound(ctx context.Context, req *pb.CloseRoundRequest) (*
 		shuffler.Unshuffle(replies)
 		// drop the noise
 		st.replies = replies[:numNonNoise]
+		duration := time.Now().Sub(start)
+		logger.WithFields(log.Fields{"duration": duration}).Infof("Ready to return onions")
 	} else {
+		start := time.Now()
 		st.replies = srv.Services[req.Service].SortReplies(st.incoming)
+		duration := time.Now().Sub(start)
+		logger.WithFields(log.Fields{"duration": duration}).Infof("Sorted replies")
+
 		st.incoming = nil
 	}
 
@@ -615,6 +623,7 @@ func (c *Client) RunRound(ctx context.Context, server PublicServerConfig, servic
 		return nil, err
 	}
 
+	start := time.Now()
 	errs := make(chan error, 1)
 	spans := concurrency.Spans(len(onions), 4000)
 	for _, span := range spans {
@@ -640,6 +649,8 @@ func (c *Client) RunRound(ctx context.Context, server PublicServerConfig, servic
 	if addErr != nil {
 		return nil, addErr
 	}
+	duration := time.Now().Sub(start)
+	log.WithFields(log.Fields{"round": round, "duration": duration, "onions": len(onions)}).Infof("RunRound: added onions to next mixer")
 
 	closeReq := &pb.CloseRoundRequest{
 		Service: service,
@@ -650,6 +661,7 @@ func (c *Client) RunRound(ctx context.Context, server PublicServerConfig, servic
 		return nil, closeErr
 	}
 
+	start = time.Now()
 	replies := make([][]byte, len(onions))
 	for _, span := range spans {
 		go func(span concurrency.Span) {
@@ -677,6 +689,8 @@ func (c *Client) RunRound(ctx context.Context, server PublicServerConfig, servic
 	if getErr != nil {
 		return nil, getErr
 	}
+	duration = time.Now().Sub(start)
+	log.WithFields(log.Fields{"round": round, "duration": duration, "onions": len(onions)}).Infof("RunRound: fetched onions from prev mixer")
 
 	_, err = conn.DeleteRound(ctx, &pb.DeleteRoundRequest{
 		Service: service,
