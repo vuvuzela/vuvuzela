@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/binary"
@@ -182,6 +183,12 @@ func (c *Conversation) NextMessage(round uint32) *convo.DeadDropMessage {
 	msgdata := msg.Marshal()
 
 	roundKey := c.rollAndReplaceKey(round)
+	if roundKey == nil {
+		// We've rolled past this round so generate cover traffic.
+		dummy := new(convo.DeadDropMessage)
+		rand.Read(dummy.EncryptedMessage[:])
+		return dummy
+	}
 	ctxt := c.Seal(msgdata[:], round, roundKey)
 
 	var encmsg [convo.SizeEncryptedMessageBody]byte
