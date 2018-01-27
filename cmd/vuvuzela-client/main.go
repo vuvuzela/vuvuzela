@@ -1,14 +1,18 @@
 package main
 
 import (
+	"crypto/rand"
 	"flag"
 	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
 
+	"golang.org/x/crypto/ed25519"
+
 	"vuvuzela.io/alpenhorn"
 	"vuvuzela.io/alpenhorn/config"
+	"vuvuzela.io/alpenhorn/errors"
 	"vuvuzela.io/alpenhorn/log"
 	"vuvuzela.io/vuvuzela"
 )
@@ -32,44 +36,128 @@ func main() {
 		log.Fatal(err)
 	}
 
-	alpStatePath := filepath.Join(confHome, fmt.Sprintf("%s-alpenhorn-client-state", *username))
-	keywheelPath := filepath.Join(confHome, fmt.Sprintf("%s-keywheel", *username))
-	alpenhornClient, err := alpenhorn.LoadClient(alpStatePath, keywheelPath)
-	if os.IsNotExist(err) {
-		fmt.Printf("No Alpenhorn client state found for username %s in %s.\n", *username, confHome)
-		fmt.Printf("Use vuvuzela-keygen to generate new client state.\n")
-		os.Exit(1)
-	}
-	if err != nil {
-		log.Fatalf("Failed to load alpenhorn client: %s", err)
-		return
-	}
-
-	alpenhornClient.ConfigClient = config.StdClient
-
-	vzStatePath := filepath.Join(confHome, fmt.Sprintf("%s-vuvuzela-client-state", *username))
-	vzClient, err := vuvuzela.LoadClient(vzStatePath)
-	if os.IsNotExist(err) {
-		fmt.Printf("No Vuvuzela client state found for username %s in %s.\n", *username, confHome)
-		fmt.Printf("Use vuvuzela-keygen to generate new client state.\n")
-		os.Exit(1)
-	}
-	if err != nil {
-		log.Fatalf("Failed to load vuvuzela client: %s", err)
-		return
-	}
-	vzClient.ConfigClient = config.StdClient
+	alpenhornClient, isNewAlpClient := LoadAlpenhornState(confHome, *username)
+	vuvuzelaClient, isNewVuvuzelaClient := LoadVuvuzelaState(confHome, *username)
 
 	gc := &GuiClient{
 		myName:          alpenhornClient.Username,
-		convoClient:     vzClient,
+		convoClient:     vuvuzelaClient,
 		alpenhornClient: alpenhornClient,
 		pendingRounds:   make(map[uint32]pendingRound),
 		active:          make(map[*Conversation]bool),
 	}
 	alpenhornClient.Handler = gc
-	vzClient.Handler = gc
+	vuvuzelaClient.Handler = gc
 	log.StdLogger.EntryHandler = gc
 
-	gc.Run()
+	gc.Run(launchStatus{
+		isNewAlpenhornClient: isNewAlpClient,
+		isNewVuvuzelaClient:  isNewVuvuzelaClient,
+	})
+}
+
+func LoadAlpenhornState(confHome string, username string) (client *alpenhorn.Client, new bool) {
+	alpStatePath := filepath.Join(confHome, fmt.Sprintf("%s-alpenhorn-client-state", username))
+	keywheelPath := filepath.Join(confHome, fmt.Sprintf("%s-keywheel", username))
+
+	var err error
+	client, err = alpenhorn.LoadClient(alpStatePath, keywheelPath)
+	if os.IsNotExist(err) {
+		client, err = generateAlpenhornClient(username, alpStatePath, keywheelPath)
+		if err != nil {
+			fmt.Printf("Failed to generate new Alpenhorn client: %s\n", err)
+			os.Exit(1)
+		}
+		new = true
+	}
+	if err != nil {
+		fmt.Printf("Failed to load alpenhorn client: %s\n", err)
+		os.Exit(1)
+	}
+
+	client.ConfigClient = config.StdClient
+	return
+}
+
+func LoadVuvuzelaState(confHome string, username string) (client *vuvuzela.Client, new bool) {
+	vzStatePath := filepath.Join(confHome, fmt.Sprintf("%s-vuvuzela-client-state", username))
+
+	var err error
+	client, err = vuvuzela.LoadClient(vzStatePath)
+	if os.IsNotExist(err) {
+		client, err = generateVuvuzelaClient(vzStatePath)
+		if err != nil {
+			fmt.Printf("Failed to generate new Vuvuzela client: %s\n", err)
+			os.Exit(1)
+		}
+		new = true
+	}
+	if err != nil {
+		fmt.Printf("Failed to load vuvuzela client: %s\n", err)
+		os.Exit(1)
+	}
+
+	client.ConfigClient = config.StdClient
+	return
+}
+
+func generateAlpenhornClient(username string, alpStatePath string, keywheelPath string) (*alpenhorn.Client, error) {
+	addFriendConfig, err := config.StdClient.CurrentConfig("AddFriend")
+	if err != nil {
+		return nil, errors.Wrap(err, "fetching latest addfriend config")
+	}
+	dialingConfig, err := config.StdClient.CurrentConfig("Dialing")
+	if err != nil {
+		return nil, errors.Wrap(err, "fetching latest dialing config")
+	}
+
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+
+	client := &alpenhorn.Client{
+		Username:           username,
+		LongTermPrivateKey: privateKey,
+		LongTermPublicKey:  publicKey,
+
+		// For now, reuse the long term key for the PKG login key.
+		PKGLoginKey: privateKey,
+
+		ClientPersistPath:   alpStatePath,
+		KeywheelPersistPath: keywheelPath,
+	}
+	err = client.Bootstrap(
+		addFriendConfig,
+		dialingConfig,
+	)
+	if err != nil {
+		return nil, errors.Wrap(err, "bootstrapping alpenhorn client")
+	}
+	err = client.Persist()
+	if err != nil {
+		return nil, errors.Wrap(err, "persisting alpenhorn client")
+	}
+	return client, nil
+}
+
+func generateVuvuzelaClient(clientPath string) (*vuvuzela.Client, error) {
+	convoConfig, err := config.StdClient.CurrentConfig("Convo")
+	if err != nil {
+		return nil, errors.Wrap(err, "fetching latest convo config")
+	}
+
+	client := &vuvuzela.Client{
+		PersistPath: clientPath,
+	}
+	err = client.Bootstrap(convoConfig)
+	if err != nil {
+		return nil, errors.Wrap(err, "bootstrapping vuvuzela client")
+	}
+	err = client.Persist()
+	if err != nil {
+		return nil, errors.Wrap(err, "persisting vuvuzela client")
+	}
+
+	return client, nil
 }

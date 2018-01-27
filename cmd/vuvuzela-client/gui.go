@@ -20,6 +20,7 @@ import (
 	"vuvuzela.io/alpenhorn"
 	"vuvuzela.io/alpenhorn/log"
 	"vuvuzela.io/alpenhorn/log/ansi"
+	"vuvuzela.io/alpenhorn/pkg"
 	"vuvuzela.io/vuvuzela"
 	"vuvuzela.io/vuvuzela/convo"
 )
@@ -168,6 +169,30 @@ var commands = map[string]Command{
 		Help: "/quit quits vuvuzela.",
 		Handler: func(_ *GuiClient, _ []string) error {
 			return gocui.ErrQuit
+		},
+	},
+
+	"connect": {
+		Help: "/connect connects to the Vuvuzela servers.",
+		Handler: func(gc *GuiClient, args []string) error {
+			// Connect needs to be called in a different goroutine since it
+			// the calls PrintfSync functions.
+			go gc.Connect()
+			return nil
+		},
+	},
+
+	"register": {
+		Help: "/register <token> registers your username with the Alpenhorn servers.",
+		Handler: func(gc *GuiClient, args []string) error {
+			if len(args) == 0 {
+				gc.Warnf("Usage: /register <token>\nSee https://vuvuzela.io to get started.\n")
+				return nil
+			}
+			gc.Warnf("Checking registration status (this may take a minute)...\n")
+			// Don't block the GUI while contacting the PKG servers.
+			go gc.EnsureRegistered(args[0])
+			return nil
 		},
 	},
 
@@ -912,59 +937,116 @@ func quit(g *gocui.Gui, v *gocui.View) error {
 	return gocui.ErrQuit
 }
 
+func (gc *GuiClient) EnsureRegistered(token string) {
+	pkgStats := gc.alpenhornClient.PKGStatus()
+	buf := new(bytes.Buffer)
+	for _, st := range pkgStats {
+		fmt.Fprintf(buf, " ·  ")
+		if st.Error == nil {
+			fmt.Fprintf(buf, "PKG %s: OK (already registered)\n", st.Server.Address)
+			continue
+		}
+		pkgErr, ok := st.Error.(pkg.Error)
+		if !ok {
+			fmt.Fprintf(buf, "PKG %s: %s\n", st.Server.Address, st.Error)
+			continue
+		}
+		if pkgErr.Code != pkg.ErrNotRegistered {
+			fmt.Fprintf(buf, "PKG %s: %s\n", st.Server.Address, pkgErr)
+			continue
+		}
+		err := gc.alpenhornClient.Register(st.Server, token)
+		if err != nil {
+			fmt.Fprintf(buf, "PKG %s: failed to register: %s\n", st.Server.Address, err)
+			continue
+		}
+		fmt.Fprintf(buf, "PKG %s: OK (registered)\n", st.Server.Address)
+	}
+	gc.WarnfSync("Registration status for %q:\n%s", gc.alpenhornClient.Username, buf.String())
+}
+
 func (gc *GuiClient) Connect() {
+	pkgStats := gc.alpenhornClient.PKGStatus()
+	var numOK, numUnregistered int
+	for _, st := range pkgStats {
+		if st.Error == nil {
+			numOK++
+			continue
+		}
+		switch err := st.Error.(type) {
+		case pkg.Error:
+			if err.Code == pkg.ErrNotRegistered {
+				numUnregistered++
+				continue
+			}
+		}
+	}
+
+	if numUnregistered == len(pkgStats) {
+		gc.WarnfSync("Username %q not registered. Visit https://vuvuzela.io to get started.\n", gc.alpenhornClient.Username)
+		return
+	} else if numOK != len(pkgStats) {
+		buf := new(bytes.Buffer)
+		for _, st := range pkgStats {
+			fmt.Fprintf(buf, " ·  PKG %s: %s\n", st.Server.Address, statusString(st.Error))
+		}
+		gc.WarnfSync("Connection error: inconsistent PKG status for %q:\n%s", gc.alpenhornClient.Username, buf.String())
+		gc.WarnfSync("Type /connect after resolving the issue to try again.\n")
+		return
+	}
+
 	gc.connectOnce.Do(func() {
-		go gc.addFriendLoop()
-		go gc.dialingLoop()
-		go gc.convoLoop()
+		go gc.connectLoop("AddFriend", gc.alpenhornClient.ConnectAddFriend)
+		go gc.connectLoop("Dialing", gc.alpenhornClient.ConnectDialing)
+		go gc.connectLoop("Convo", gc.convoClient.ConnectConvo)
 	})
+}
+
+func statusString(err error) string {
+	if err == nil {
+		return "OK"
+	}
+	switch err := err.(type) {
+	case pkg.Error:
+		switch err.Code {
+		case pkg.ErrNotRegistered:
+			return "Username not registered"
+		case pkg.ErrInvalidSignature:
+			return "Invalid signature (username taken)"
+		}
+	}
+	return err.Error()
 }
 
 const connectRetry = 10 * time.Second
 
-func (gc *GuiClient) addFriendLoop() {
+func (gc *GuiClient) connectLoop(service string, connectFunc func() (chan error, error)) {
+	var prevErr error
 	for {
 		disconnect, err := gc.alpenhornClient.ConnectAddFriend()
 		if err != nil {
+			if prevErr == nil || (err.Error() != prevErr.Error()) {
+				// Don't repeat the same error message over and over again.
+				gc.WarnfSync("Error connecting to %s service: %s (retrying every %s)\n", service, err, connectRetry)
+				prevErr = err
+			}
 			time.Sleep(connectRetry)
 			continue
 		}
-		gc.WarnfSync("Connected to AddFriend service!\n")
+		gc.WarnfSync("Connected to %s service!\n", service)
+		prevErr = nil
 		err = <-disconnect
-		gc.WarnfSync("Disconnected from AddFriend service: %s (retrying every %s)\n", err, connectRetry)
+		gc.WarnfSync("Disconnected from %s service: %s (reconnecting in %s)\n", service, err, connectRetry)
 		time.Sleep(connectRetry)
 	}
 }
 
-func (gc *GuiClient) dialingLoop() {
-	for {
-		disconnect, err := gc.alpenhornClient.ConnectDialing()
-		if err != nil {
-			time.Sleep(connectRetry)
-			continue
-		}
-		gc.WarnfSync("Connected to Dialing service!\n")
-		err = <-disconnect
-		gc.WarnfSync("Disconnected from Dialing service: %s (retrying every %s)\n", err, connectRetry)
-		time.Sleep(connectRetry)
-	}
+type launchStatus struct {
+	isNewAlpenhornClient bool
+	isNewVuvuzelaClient  bool
 }
 
-func (gc *GuiClient) convoLoop() {
-	for {
-		disconnect, err := gc.convoClient.ConnectConvo()
-		if err != nil {
-			time.Sleep(connectRetry)
-			continue
-		}
-		gc.WarnfSync("Connected to Convo service!\n")
-		err = <-disconnect
-		gc.WarnfSync("Disconnected from Convo service: %s (retrying every %s)\n", err, connectRetry)
-		time.Sleep(connectRetry)
-	}
-}
-
-func (gc *GuiClient) Run() {
+func (gc *GuiClient) Run(status launchStatus) {
 	gui, err := gocui.NewGui(gocui.OutputNormal)
 	if err != nil {
 		panic(err)
@@ -1004,6 +1086,20 @@ func (gc *GuiClient) Run() {
 	gui.FgColor = gocui.ColorDefault
 
 	go func() {
+		if status.isNewAlpenhornClient || status.isNewVuvuzelaClient {
+			time.Sleep(500 * time.Millisecond)
+			if status.isNewAlpenhornClient {
+				gc.PrintfSync("\n-!- Generated new Alpenhorn client\n")
+				gc.PrintfSync(" ·  Username:   %s\n", gc.alpenhornClient.Username)
+				gc.PrintfSync(" ·  Public Key: %s\n", base32.EncodeToString(gc.alpenhornClient.LongTermPublicKey))
+				gc.PrintfSync(" ·  Data Path:  %s\n", gc.alpenhornClient.ClientPersistPath)
+			}
+			if status.isNewVuvuzelaClient {
+				gc.PrintfSync("\n-!- Generated new Vuvuzela client\n")
+				gc.PrintfSync(" ·  Data Path:  %s\n", gc.convoClient.PersistPath)
+			}
+			gc.PrintfSync("\n@@@ Cautious users should verify the initial configs at the above paths before sending messages. @@@\n\n")
+		}
 		time.Sleep(500 * time.Millisecond)
 		gc.Connect()
 	}()
