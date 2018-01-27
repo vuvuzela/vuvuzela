@@ -5,6 +5,8 @@
 package convo
 
 import (
+	"encoding/json"
+
 	"golang.org/x/crypto/ed25519"
 
 	"vuvuzela.io/alpenhorn/config"
@@ -19,7 +21,10 @@ func init() {
 	config.RegisterService("Convo", &ConvoConfig{})
 }
 
+const ConvoConfigVersion = 1
+
 type ConvoConfig struct {
+	Version     int
 	Coordinator CoordinatorConfig
 	MixServers  []mixnet.PublicServerConfig
 }
@@ -28,6 +33,72 @@ type ConvoConfig struct {
 type CoordinatorConfig struct {
 	Key     ed25519.PublicKey
 	Address string
+}
+
+//easyjson:readable
+type convoV1 struct {
+	Version     int
+	Coordinator keyAddr
+	MixServers  []keyAddr
+}
+
+//easyjson:readable
+type keyAddr struct {
+	Key     ed25519.PublicKey
+	Address string
+}
+
+func (c *ConvoConfig) v1() (*convoV1, error) {
+	c1 := &convoV1{
+		Version:     1,
+		Coordinator: keyAddr{c.Coordinator.Key, c.Coordinator.Address},
+		MixServers:  make([]keyAddr, len(c.MixServers)),
+	}
+	for i, srv := range c.MixServers {
+		c1.MixServers[i] = keyAddr{srv.Key, srv.Address}
+	}
+	return c1, nil
+}
+
+func (c *ConvoConfig) fromV1(c1 *convoV1) error {
+	c.Version = 1
+	c.Coordinator = CoordinatorConfig{c1.Coordinator.Key, c1.Coordinator.Address}
+	c.MixServers = make([]mixnet.PublicServerConfig, len(c1.MixServers))
+	for i, srv := range c1.MixServers {
+		c.MixServers[i] = mixnet.PublicServerConfig{Key: srv.Key, Address: srv.Address}
+	}
+	return nil
+}
+
+func (c *ConvoConfig) MarshalJSON() ([]byte, error) {
+	switch c.Version {
+	case 1:
+		c1, err := c.v1()
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(c1)
+	default:
+		return nil, errors.New("unknown ConvoConfig version: %d", c.Version)
+	}
+}
+
+func (c *ConvoConfig) UnmarshalJSON(data []byte) error {
+	version, err := getVersionFromJSON(data)
+	if err != nil {
+		return err
+	}
+	switch version {
+	case 1:
+		c1 := new(convoV1)
+		err := json.Unmarshal(data, c1)
+		if err != nil {
+			return err
+		}
+		return c.fromV1(c1)
+	default:
+		return errors.New("unknown ConvoConfig version: %d", c.Version)
+	}
 }
 
 func (c *ConvoConfig) Validate() error {
@@ -52,4 +123,16 @@ func (c *ConvoConfig) Validate() error {
 	}
 
 	return nil
+}
+
+func getVersionFromJSON(data []byte) (int, error) {
+	type ver struct {
+		Version int
+	}
+	v := new(ver)
+	err := json.Unmarshal(data, v)
+	if err != nil {
+		return -1, err
+	}
+	return v.Version, nil
 }

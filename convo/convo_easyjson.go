@@ -17,6 +17,201 @@ var (
 	_ easyjson.Marshaler
 )
 
+func easyjsonDecodeKeyAddr1b32f41b(in *jlexer.Lexer, out *keyAddr) {
+	isTopLevel := in.IsStart()
+	if in.IsNull() {
+		if isTopLevel {
+			in.Consumed()
+		}
+		in.Skip()
+		return
+	}
+	in.Delim('{')
+	for !in.IsDelim('}') {
+		key := in.UnsafeString()
+		in.WantColon()
+		if in.IsNull() {
+			in.Skip()
+			in.WantComma()
+			continue
+		}
+		switch key {
+		case "Key":
+			if in.IsNull() {
+				in.Skip()
+				out.Key = nil
+			} else {
+				out.Key = in.BytesReadable()
+			}
+		case "Address":
+			out.Address = string(in.String())
+		default:
+			in.SkipRecursive()
+		}
+		in.WantComma()
+	}
+	in.Delim('}')
+	if isTopLevel {
+		in.Consumed()
+	}
+}
+func easyjsonEncodeKeyAddr1b32f41b(out *jwriter.Writer, in keyAddr) {
+	out.RawByte('{')
+	first := true
+	_ = first
+	if !first {
+		out.RawByte(',')
+	}
+	first = false
+	out.RawString("\"Key\":")
+	out.Base32Bytes(in.Key)
+	if !first {
+		out.RawByte(',')
+	}
+	first = false
+	out.RawString("\"Address\":")
+	out.String(string(in.Address))
+	out.RawByte('}')
+}
+
+// MarshalJSON supports json.Marshaler interface
+func (v keyAddr) MarshalJSON() ([]byte, error) {
+	w := jwriter.Writer{}
+	easyjsonEncodeKeyAddr1b32f41b(&w, v)
+	return w.Buffer.BuildBytes(), w.Error
+}
+
+// MarshalEasyJSON supports easyjson.Marshaler interface
+func (v keyAddr) MarshalEasyJSON(w *jwriter.Writer) {
+	easyjsonEncodeKeyAddr1b32f41b(w, v)
+}
+
+// UnmarshalJSON supports json.Unmarshaler interface
+func (v *keyAddr) UnmarshalJSON(data []byte) error {
+	r := jlexer.Lexer{Data: data}
+	easyjsonDecodeKeyAddr1b32f41b(&r, v)
+	return r.Error()
+}
+
+// UnmarshalEasyJSON supports easyjson.Unmarshaler interface
+func (v *keyAddr) UnmarshalEasyJSON(l *jlexer.Lexer) {
+	easyjsonDecodeKeyAddr1b32f41b(l, v)
+}
+func easyjsonDecodeConvoV11b32f41b(in *jlexer.Lexer, out *convoV1) {
+	isTopLevel := in.IsStart()
+	if in.IsNull() {
+		if isTopLevel {
+			in.Consumed()
+		}
+		in.Skip()
+		return
+	}
+	in.Delim('{')
+	for !in.IsDelim('}') {
+		key := in.UnsafeString()
+		in.WantColon()
+		if in.IsNull() {
+			in.Skip()
+			in.WantComma()
+			continue
+		}
+		switch key {
+		case "Version":
+			out.Version = int(in.Int())
+		case "Coordinator":
+			(out.Coordinator).UnmarshalEasyJSON(in)
+		case "MixServers":
+			if in.IsNull() {
+				in.Skip()
+				out.MixServers = nil
+			} else {
+				in.Delim('[')
+				if out.MixServers == nil {
+					if !in.IsDelim(']') {
+						out.MixServers = make([]keyAddr, 0, 1)
+					} else {
+						out.MixServers = []keyAddr{}
+					}
+				} else {
+					out.MixServers = (out.MixServers)[:0]
+				}
+				for !in.IsDelim(']') {
+					var v4 keyAddr
+					(v4).UnmarshalEasyJSON(in)
+					out.MixServers = append(out.MixServers, v4)
+					in.WantComma()
+				}
+				in.Delim(']')
+			}
+		default:
+			in.SkipRecursive()
+		}
+		in.WantComma()
+	}
+	in.Delim('}')
+	if isTopLevel {
+		in.Consumed()
+	}
+}
+func easyjsonEncodeConvoV11b32f41b(out *jwriter.Writer, in convoV1) {
+	out.RawByte('{')
+	first := true
+	_ = first
+	if !first {
+		out.RawByte(',')
+	}
+	first = false
+	out.RawString("\"Version\":")
+	out.Int(int(in.Version))
+	if !first {
+		out.RawByte(',')
+	}
+	first = false
+	out.RawString("\"Coordinator\":")
+	(in.Coordinator).MarshalEasyJSON(out)
+	if !first {
+		out.RawByte(',')
+	}
+	first = false
+	out.RawString("\"MixServers\":")
+	if in.MixServers == nil && (out.Flags&jwriter.NilSliceAsEmpty) == 0 {
+		out.RawString("null")
+	} else {
+		out.RawByte('[')
+		for v5, v6 := range in.MixServers {
+			if v5 > 0 {
+				out.RawByte(',')
+			}
+			(v6).MarshalEasyJSON(out)
+		}
+		out.RawByte(']')
+	}
+	out.RawByte('}')
+}
+
+// MarshalJSON supports json.Marshaler interface
+func (v convoV1) MarshalJSON() ([]byte, error) {
+	w := jwriter.Writer{}
+	easyjsonEncodeConvoV11b32f41b(&w, v)
+	return w.Buffer.BuildBytes(), w.Error
+}
+
+// MarshalEasyJSON supports easyjson.Marshaler interface
+func (v convoV1) MarshalEasyJSON(w *jwriter.Writer) {
+	easyjsonEncodeConvoV11b32f41b(w, v)
+}
+
+// UnmarshalJSON supports json.Unmarshaler interface
+func (v *convoV1) UnmarshalJSON(data []byte) error {
+	r := jlexer.Lexer{Data: data}
+	easyjsonDecodeConvoV11b32f41b(&r, v)
+	return r.Error()
+}
+
+// UnmarshalEasyJSON supports easyjson.Unmarshaler interface
+func (v *convoV1) UnmarshalEasyJSON(l *jlexer.Lexer) {
+	easyjsonDecodeConvoV11b32f41b(l, v)
+}
 func easyjsonDecodeCoordinatorConfig1b32f41b(in *jlexer.Lexer, out *CoordinatorConfig) {
 	isTopLevel := in.IsStart()
 	if in.IsNull() {
