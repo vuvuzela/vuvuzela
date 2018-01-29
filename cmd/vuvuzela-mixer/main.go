@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
+	"vuvuzela.io/alpenhorn/config"
 	"vuvuzela.io/alpenhorn/edtls"
 	"vuvuzela.io/alpenhorn/encoding/toml"
 	"vuvuzela.io/alpenhorn/log"
@@ -43,8 +44,6 @@ type Config struct {
 	PublicKey  ed25519.PublicKey
 	PrivateKey ed25519.PrivateKey
 
-	CoordinatorKey ed25519.PublicKey
-
 	Noise rand.Laplace
 }
 
@@ -60,8 +59,6 @@ logsDir = {{.LogsDir | printf "%q" }}
 
 publicKey  = {{.PublicKey | base32 | printf "%q"}}
 privateKey = {{.PrivateKey | base32 | printf "%q"}}
-
-coordinatorKey = "change me"
 
 [noise]
 mu = {{.Noise.Mu | printf "%0.1f"}}
@@ -133,9 +130,15 @@ func main() {
 		log.Fatal(err)
 	}
 
+	signedConfig, err := config.StdClient.CurrentConfig("Convo")
+	if err != nil {
+		log.Fatal(err)
+	}
+	convoConfig := signedConfig.Inner.(*convo.ConvoConfig)
+
 	mixServer := &mixnet.Server{
 		SigningKey:     conf.PrivateKey,
-		CoordinatorKey: conf.CoordinatorKey,
+		CoordinatorKey: convoConfig.Coordinator.Key,
 
 		Services: map[string]mixnet.MixService{
 			"Convo": &convo.ConvoService{
