@@ -37,12 +37,12 @@ var (
 )
 
 type Config struct {
+	PublicKey  ed25519.PublicKey
+	PrivateKey ed25519.PrivateKey
+
 	ListenAddr string
 	DebugAddr  string
 	LogsDir    string
-
-	PublicKey  ed25519.PublicKey
-	PrivateKey ed25519.PrivateKey
 
 	Noise rand.Laplace
 }
@@ -53,12 +53,12 @@ var funcMap = template.FuncMap{
 
 const confTemplate = `# Vuvuzela mixnet server config
 
+publicKey  = {{.PublicKey | base32 | printf "%q"}}
+privateKey = {{.PrivateKey | base32 | printf "%q"}}
+
 listenAddr = {{.ListenAddr | printf "%q"}}
 debugAddr = {{.DebugAddr | printf "%q" }}
 logsDir = {{.LogsDir | printf "%q" }}
-
-publicKey  = {{.PublicKey | base32 | printf "%q"}}
-privateKey = {{.PrivateKey | base32 | printf "%q"}}
 
 [noise]
 mu = {{.Noise.Mu | printf "%0.1f"}}
@@ -72,12 +72,12 @@ func writeNewConfig() {
 	}
 
 	conf := &Config{
+		PublicKey:  publicKey,
+		PrivateKey: privateKey,
+
 		ListenAddr: "0.0.0.0:2718",
 		DebugAddr:  "0.0.0.0:6060",
 		LogsDir:    vzlog.DefaultLogsDir("vuvuzela-mixer", publicKey),
-
-		PublicKey:  publicKey,
-		PrivateKey: privateKey,
 
 		Noise: rand.Laplace{
 			Mu: 100,
