@@ -44,6 +44,7 @@ type roundState struct {
 type ConvoHandler interface {
 	Outgoing(round uint32) []*convo.DeadDropMessage
 	Replies(round uint32, messages [][]byte)
+	NewConfig(chain []*config.SignedConfig)
 }
 
 func (c *Client) ConnectConvo() (chan error, error) {
@@ -131,6 +132,8 @@ func (c *Client) newConvoRound(conn typesocket.Conn, v coordinator.NewRound) {
 		log.Errorf("%s", errors.Wrap(err, "fetching convo config"))
 		return
 	}
+
+	c.Handler.NewConfig(configs)
 
 	newConfig := configs[0]
 	c.convoConfig = newConfig
