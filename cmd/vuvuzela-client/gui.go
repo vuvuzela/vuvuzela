@@ -191,7 +191,7 @@ var commands = map[string]Command{
 			}
 			gc.Warnf("Checking registration status (this may take a minute)...\n")
 			// Don't block the GUI while contacting the PKG servers.
-			go gc.EnsureRegistered(args[0])
+			go gc.RegisterAll(args[0])
 			return nil
 		},
 	},
@@ -937,13 +937,15 @@ func quit(g *gocui.Gui, v *gocui.View) error {
 	return gocui.ErrQuit
 }
 
-func (gc *GuiClient) EnsureRegistered(token string) {
+func (gc *GuiClient) RegisterAll(token string) {
 	pkgStats := gc.alpenhornClient.PKGStatus()
 	buf := new(bytes.Buffer)
+	numOK := 0
 	for _, st := range pkgStats {
 		fmt.Fprintf(buf, " ·  ")
 		if st.Error == nil {
 			fmt.Fprintf(buf, "PKG %s: OK (already registered)\n", st.Server.Address)
+			numOK++
 			continue
 		}
 		pkgErr, ok := st.Error.(pkg.Error)
@@ -961,11 +963,16 @@ func (gc *GuiClient) EnsureRegistered(token string) {
 			continue
 		}
 		fmt.Fprintf(buf, "PKG %s: OK (registered)\n", st.Server.Address)
+		numOK++
 	}
 	gc.WarnfSync("Registration status for %q:\n%s", gc.alpenhornClient.Username, buf.String())
+	if numOK == len(pkgStats) {
+		// Don't require the user to type /connect after successful registration.
+		gc.EnsureConnected()
+	}
 }
 
-func (gc *GuiClient) Connect() {
+func (gc *GuiClient) CheckPKGStatus() bool {
 	pkgStats := gc.alpenhornClient.PKGStatus()
 	var numOK, numUnregistered int
 	for _, st := range pkgStats {
@@ -984,7 +991,7 @@ func (gc *GuiClient) Connect() {
 
 	if numUnregistered == len(pkgStats) {
 		gc.WarnfSync("Username %q not registered. Visit https://vuvuzela.io to get started.\n", gc.alpenhornClient.Username)
-		return
+		return false
 	} else if numOK != len(pkgStats) {
 		buf := new(bytes.Buffer)
 		for _, st := range pkgStats {
@@ -992,9 +999,19 @@ func (gc *GuiClient) Connect() {
 		}
 		gc.WarnfSync("Connection error: inconsistent PKG status for %q:\n%s", gc.alpenhornClient.Username, buf.String())
 		gc.WarnfSync("Type /connect after resolving the issue to try again.\n")
-		return
+		return false
 	}
 
+	return true
+}
+
+func (gc *GuiClient) Connect() {
+	if gc.CheckPKGStatus() {
+		gc.EnsureConnected()
+	}
+}
+
+func (gc *GuiClient) EnsureConnected() {
 	gc.connectOnce.Do(func() {
 		go gc.connectLoop("AddFriend", gc.alpenhornClient.ConnectAddFriend)
 		go gc.connectLoop("Dialing", gc.alpenhornClient.ConnectDialing)
