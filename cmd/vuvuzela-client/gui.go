@@ -1023,7 +1023,7 @@ const connectRetry = 10 * time.Second
 func (gc *GuiClient) connectLoop(service string, connectFunc func() (chan error, error)) {
 	var prevErr error
 	for {
-		disconnect, err := gc.alpenhornClient.ConnectAddFriend()
+		disconnect, err := connectFunc()
 		if err != nil {
 			if prevErr == nil || (err.Error() != prevErr.Error()) {
 				// Don't repeat the same error message over and over again.
