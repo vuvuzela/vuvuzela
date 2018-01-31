@@ -1,12 +1,24 @@
 package main
 
 import (
+	"regexp"
+
 	"vuvuzela.io/alpenhorn"
 	"vuvuzela.io/alpenhorn/config"
 	"vuvuzela.io/alpenhorn/log"
 )
 
 func (gc *GuiClient) Error(err error) {
+	if *debug {
+		log.Error(err)
+		return
+	}
+	// Ignore some errors by default and do it the hacky way since
+	// we don't have a great plan for errors anyway.
+	matched, _ := regexp.MatchString("round [0-9]+ not configured", err.Error())
+	if matched {
+		return
+	}
 	log.Error(err)
 }
 

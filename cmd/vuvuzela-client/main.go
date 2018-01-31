@@ -18,6 +18,7 @@ import (
 )
 
 var username = flag.String("username", "", "Alpenhorn username")
+var debug = flag.Bool("debug", false, "Turn on debug mode")
 
 func main() {
 	flag.Parse()
