@@ -13,7 +13,6 @@ import (
 
 	"vuvuzela.io/alpenhorn/config"
 	"vuvuzela.io/alpenhorn/errors"
-	"vuvuzela.io/alpenhorn/log"
 	"vuvuzela.io/alpenhorn/typesocket"
 	"vuvuzela.io/crypto/onionbox"
 	"vuvuzela.io/vuvuzela/convo"
@@ -45,6 +44,7 @@ type ConvoHandler interface {
 	Outgoing(round uint32) []*convo.DeadDropMessage
 	Replies(round uint32, messages [][]byte)
 	NewConfig(chain []*config.SignedConfig)
+	Error(err error)
 }
 
 func (c *Client) ConnectConvo() (chan error, error) {
@@ -103,7 +103,7 @@ func (c *Client) convoMux() typesocket.Mux {
 }
 
 func (c *Client) convoRoundError(conn typesocket.Conn, v coordinator.RoundError) {
-	log.WithFields(log.Fields{"round": v.Round}).Errorf("convo coordinator sent error: %s", v.Err)
+	c.Handler.Error(errors.New("convo coordinator sent error: %s", v.Err))
 }
 
 func (c *Client) newConvoRound(conn typesocket.Conn, v coordinator.NewRound) {
@@ -113,7 +113,7 @@ func (c *Client) newConvoRound(conn typesocket.Conn, v coordinator.NewRound) {
 	st, ok := c.rounds[v.Round]
 	if ok {
 		if st.ConfigParent.Hash() != v.ConfigHash {
-			log.Errorf("%s", errors.New("coordinator announced different configs round %d", v.Round))
+			c.Handler.Error(errors.New("coordinator announced different configs round %d", v.Round))
 		}
 		return
 	}
@@ -129,7 +129,7 @@ func (c *Client) newConvoRound(conn typesocket.Conn, v coordinator.NewRound) {
 
 	configs, err := c.ConfigClient.FetchAndVerifyChain(c.convoConfig, v.ConfigHash)
 	if err != nil {
-		log.Errorf("%s", errors.Wrap(err, "fetching convo config"))
+		c.Handler.Error(errors.Wrap(err, "fetching convo config"))
 		return
 	}
 
@@ -156,8 +156,7 @@ func (c *Client) sendConvoOnion(conn typesocket.Conn, v coordinator.MixRound) {
 	st, ok := c.rounds[round]
 	c.mu.Unlock()
 	if !ok {
-		err := errors.New("sendConvoOnion: round %d not configured", round)
-		log.Errorf("%s", err)
+		c.Handler.Error(errors.New("sendConvoOnion: round %d not configured", round))
 		return
 	}
 
@@ -169,7 +168,7 @@ func (c *Client) sendConvoOnion(conn typesocket.Conn, v coordinator.MixRound) {
 				"round %d: failed to verify mixnet settings for key %s",
 				round, base32.EncodeToString(mixer.Key),
 			)
-			log.Errorf("%s", err)
+			c.Handler.Error(err)
 			return
 		}
 	}
@@ -197,12 +196,13 @@ func (c *Client) openReplyOnion(conn typesocket.Conn, v coordinator.OnionMsg) {
 	st, ok := c.rounds[v.Round]
 	c.mu.Unlock()
 	if !ok {
-		log.WithFields(log.Fields{"round": v.Round}).Error("round not found")
+		c.Handler.Error(errors.New("openReplyOnion: round %d not configured", v.Round))
 		return
 	}
 
 	if len(st.OnionKeys) != len(v.Onions) {
-		log.WithFields(log.Fields{"round": v.Round}).Errorf("expected %d onions, got %d", len(st.OnionKeys), len(v.Onions))
+		err := errors.New("round %d: expected %d onions, got %d", v.Round, len(st.OnionKeys), len(v.Onions))
+		c.Handler.Error(err)
 		return
 	}
 
@@ -210,7 +210,8 @@ func (c *Client) openReplyOnion(conn typesocket.Conn, v coordinator.OnionMsg) {
 	for i, onion := range v.Onions {
 		msg, ok := onionbox.Open(onion, mixnet.BackwardNonce(v.Round), st.OnionKeys[i])
 		if !ok {
-			log.WithFields(log.Fields{"round": v.Round}).Error("failed to decrypt onion")
+			err := errors.New("round %d: failed to decrypt onion", v.Round)
+			c.Handler.Error(err)
 		}
 		msgs[i] = msg
 	}
