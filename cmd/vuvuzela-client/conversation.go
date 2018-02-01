@@ -259,6 +259,7 @@ func (c *Conversation) Reply(round uint32, encmsg []byte) {
 	case *TextMessage:
 		s := strings.TrimRight(string(m.Message), "\x00")
 		c.PrintfSync("<%s> %s\n", c.peerUsername, s)
+		seldomNotify("%s says: %s", c.peerUsername, s)
 	case *TimestampMessage:
 		// ignore it
 	}
