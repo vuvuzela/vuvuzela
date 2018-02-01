@@ -33,6 +33,7 @@ func (gc *GuiClient) SentFriendRequest(r *alpenhorn.OutgoingFriendRequest) {
 func (gc *GuiClient) ReceivedFriendRequest(r *alpenhorn.IncomingFriendRequest) {
 	gc.WarnfSync("Received friend request: %s\n", r.Username)
 	gc.WarnfSync("Type `/approve %s` to approve the friend request.\n", r.Username)
+	notify("Friend request from %s", r.Username)
 }
 
 func (gc *GuiClient) UnexpectedSigningKey(in *alpenhorn.IncomingFriendRequest, out *alpenhorn.OutgoingFriendRequest) {
@@ -62,6 +63,7 @@ func (gc *GuiClient) SendingCall(call *alpenhorn.OutgoingCall) {
 func (gc *GuiClient) ReceivedCall(call *alpenhorn.IncomingCall) {
 	convo := gc.getOrCreateConvo(call.Username)
 	convo.WarnfSync("Received call: %s\n", call.Username)
+	notify("Call from %s", call.Username)
 
 	round := gc.latestConvoRound()
 	wheel := &keywheelStart{
@@ -81,4 +83,5 @@ func (gc *GuiClient) NewConfig(chain []*config.SignedConfig) {
 	prev := chain[len(chain)-1]
 	next := chain[0]
 	gc.WarnfSync("New %q config: %s -> %s\n", prev.Service, prev.Hash(), next.Hash())
+	notify("New %s config", prev.Service)
 }

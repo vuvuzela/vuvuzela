@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/davidlazar/go-crypto/encoding/base32"
+	"github.com/gen2brain/beeep"
 	"github.com/jroimartin/gocui"
 
 	"vuvuzela.io/alpenhorn"
@@ -1160,4 +1161,9 @@ func vuvuzelaEditor(v *gocui.View, key gocui.Key, ch rune, mod gocui.Modifier) {
 	case key == gocui.KeyArrowRight:
 		v.MoveCursor(1, 0, true)
 	}
+}
+
+func notify(format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	beeep.Notify("Vuvuzela", msg, "")
 }
