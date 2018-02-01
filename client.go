@@ -103,7 +103,7 @@ func (c *Client) convoMux() typesocket.Mux {
 }
 
 func (c *Client) convoRoundError(conn typesocket.Conn, v coordinator.RoundError) {
-	c.Handler.Error(errors.New("convo coordinator sent error: %s", v.Err))
+	c.Handler.Error(errors.New("error from convo coordinator: %s", v.Err))
 }
 
 func (c *Client) newConvoRound(conn typesocket.Conn, v coordinator.NewRound) {
