@@ -10,6 +10,7 @@ import (
 
 	"github.com/davidlazar/go-crypto/encoding/base32"
 	"golang.org/x/crypto/ed25519"
+	"golang.org/x/crypto/nacl/box"
 
 	"vuvuzela.io/alpenhorn/config"
 	"vuvuzela.io/alpenhorn/errors"
@@ -206,11 +207,17 @@ func (c *Client) openReplyOnion(conn typesocket.Conn, v coordinator.OnionMsg) {
 		return
 	}
 
+	expectedOnionSize := convo.SizeEncryptedMessageBody + len(st.Config.MixServers)*box.Overhead
 	msgs := make([][]byte, len(v.Onions))
 	for i, onion := range v.Onions {
+		if len(onion) != expectedOnionSize {
+			err := errors.New("convo round %d: received malformed onion: got %d bytes, want %d bytes", v.Round, len(onion), expectedOnionSize)
+			c.Handler.Error(err)
+			continue
+		}
 		msg, ok := onionbox.Open(onion, mixnet.BackwardNonce(v.Round), st.OnionKeys[i])
 		if !ok {
-			err := errors.New("round %d: failed to decrypt onion", v.Round)
+			err := errors.New("convo round %d: failed to decrypt onion", v.Round)
 			c.Handler.Error(err)
 		}
 		msgs[i] = msg
