@@ -36,7 +36,7 @@ type Client struct {
 }
 
 type roundState struct {
-	OnionKeys    [][]*[32]byte
+	OnionKeys    [][]*[32]byte // [msg][mixer]
 	Config       *convo.ConvoConfig
 	ConfigParent *config.SignedConfig
 }
