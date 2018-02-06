@@ -501,11 +501,14 @@ func (gc *GuiClient) printHelp() error {
 		validCmds = append(validCmds, cmd)
 	}
 	sort.Strings(validCmds)
-	gc.Warnf("Valid commands:\n")
+	gc.Printf("%s\nCommands:\n", ansi.Colorf("Vuvuzela Help", ansi.Bold))
 	for _, cmd := range validCmds {
-		gc.Warnf("  %s\n", allCommands[cmd].Help)
+		gc.Printf("  %s\n", allCommands[cmd].Help)
 	}
-	gc.Warnf("Report bugs to: https://github.com/vuvuzela/vuvuzela\n")
+	gc.Printf("To jump between windows use the /w command, Alt-[1..9], or Esc+[1..9].\n")
+	gc.Printf("Scroll up and down with PageUp and PageDown.\n")
+	gc.Printf("Get started at: https://vuvuzela.io/getstarted\n")
+	gc.Printf("Report bugs to: https://github.com/vuvuzela/vuvuzela\n")
 	return nil
 }
 
