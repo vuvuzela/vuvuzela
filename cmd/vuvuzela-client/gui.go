@@ -1065,7 +1065,7 @@ type launchStatus struct {
 }
 
 func (gc *GuiClient) Run(status launchStatus) {
-	gui, err := gocui.NewGui(gocui.OutputNormal)
+	gui, err := gocui.NewGui(gocui.Output256)
 	if err != nil {
 		panic(err)
 	}
