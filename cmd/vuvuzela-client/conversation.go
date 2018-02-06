@@ -108,10 +108,28 @@ func (c *Conversation) QueueTextMessage(msg []byte) {
 	}
 
 	if ok {
-		c.Printf("%s %s\n", ansi.Colorf("<"+c.myUsername+">", ansi.Bold), msg)
+		c.Printf("%s\n", c.formatUserMessage(true, string(msg)))
 	} else {
 		c.Warnf("Queue full, message not sent to %s: %s\n", c.peerUsername, msg)
 	}
+}
+
+func (c *Conversation) formatUserMessage(fromMe bool, msg string) string {
+	max := len(c.myUsername)
+	if n := len(c.peerUsername); n > max {
+		max = n
+	}
+	max += 1
+
+	username := c.peerUsername
+	var usernameColor []ansi.Code
+	if fromMe {
+		username = c.myUsername
+		usernameColor = []ansi.Code{ansi.Bold}
+	}
+	pad := strings.Repeat(" ", max-len(username))
+
+	return fmt.Sprintf("%s%s %s %s", pad, ansi.Colorf(username, usernameColor...), ansi.Colorf("|", ansi.Foreground(27)), msg)
 }
 
 func (c *Conversation) Printf(format string, args ...interface{}) {
@@ -120,6 +138,7 @@ func (c *Conversation) Printf(format string, args ...interface{}) {
 		return
 	}
 
+	fmt.Fprintf(v, "%s ", ansi.Colorf(time.Now().Format("15:04:05"), ansi.Foreground(8)))
 	fmt.Fprintf(v, format, args...)
 
 	c.Lock()
@@ -139,6 +158,7 @@ func (c *Conversation) PrintfSync(format string, args ...interface{}) {
 			return err
 		}
 
+		fmt.Fprintf(v, "%s ", ansi.Colorf(time.Now().Format("15:04:05"), ansi.Foreground(8)))
 		_, err = fmt.Fprintf(v, format, args...)
 
 		return err
@@ -258,7 +278,7 @@ func (c *Conversation) Reply(round uint32, encmsg []byte) {
 	switch m := msg.Body.(type) {
 	case *TextMessage:
 		s := strings.TrimRight(string(m.Message), "\x00")
-		c.PrintfSync("<%s> %s\n", c.peerUsername, s)
+		c.PrintfSync("%s\n", c.formatUserMessage(false, s))
 		seldomNotify("%s says: %s", c.peerUsername, s)
 	case *TimestampMessage:
 		// ignore it
