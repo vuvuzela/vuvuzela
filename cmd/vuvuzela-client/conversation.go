@@ -173,11 +173,11 @@ func (c *Conversation) PrintfSync(format string, args ...interface{}) {
 }
 
 func (c *Conversation) Warnf(format string, args ...interface{}) {
-	c.Printf("-!- "+format, args...)
+	c.Printf(warningPrefix+format, args...)
 }
 
 func (c *Conversation) WarnfSync(format string, args ...interface{}) {
-	c.PrintfSync("-!- "+format, args...)
+	c.PrintfSync(warningPrefix+format, args...)
 }
 
 func (c *Conversation) NextMessage(round uint32) *convo.DeadDropMessage {

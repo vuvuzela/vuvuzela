@@ -692,12 +692,15 @@ func (gc *GuiClient) PrintfSync(format string, v ...interface{}) {
 	<-done
 }
 
+// warningPrefix is yellow.
+var warningPrefix = fmt.Sprintf("%s ", ansi.Colorf("-!-", ansi.Foreground(11)))
+
 func (gc *GuiClient) Warnf(format string, v ...interface{}) {
-	gc.Printf("-!- "+format, v...)
+	gc.Printf(warningPrefix+format, v...)
 }
 
 func (gc *GuiClient) WarnfSync(format string, v ...interface{}) {
-	gc.PrintfSync("-!- "+format, v...)
+	gc.PrintfSync(warningPrefix+format, v...)
 }
 
 func (gc *GuiClient) focusMain() error {
