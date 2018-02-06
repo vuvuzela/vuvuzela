@@ -1107,6 +1107,7 @@ func (gc *GuiClient) Run(status launchStatus) {
 	gui.FgColor = gocui.ColorDefault
 
 	go func() {
+		gc.Printf("Welcome to Vuvuzela. Type /help for help.\n")
 		if status.isNewAlpenhornClient || status.isNewVuvuzelaClient {
 			time.Sleep(500 * time.Millisecond)
 			if status.isNewAlpenhornClient {
