@@ -839,8 +839,8 @@ func (gc *GuiClient) layout(g *gocui.Gui) error {
 		}
 		sv.Wrap = false
 		sv.Frame = false
-		sv.BgColor = gocui.ColorBlue
-		sv.FgColor = gocui.ColorWhite
+		sv.BgColor = 26
+		sv.FgColor = 231
 	}
 	sv.Clear()
 
