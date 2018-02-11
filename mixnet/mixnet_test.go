@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ed25519"
+	"golang.org/x/crypto/nacl/box"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -190,5 +191,27 @@ func TestMixnetPerformance(t *testing.T) {
 		if len(replies) != len(onions) {
 			log.Fatalf("unexpected number of reply onions: got %d, want %d", len(replies), len(onions))
 		}
+	}
+}
+
+func BenchmarkDecryption(b *testing.B) {
+	count := *numMsgs
+	keys := make([]*[32]byte, count)
+	concurrency.ParallelFor(count, func(p *concurrency.P) {
+		for i, ok := p.Next(); ok; i, ok = p.Next() {
+			pub, _, _ := box.GenerateKey(rand.Reader)
+			keys[i] = pub
+		}
+	})
+	_, priv, _ := box.GenerateKey(rand.Reader)
+	b.ResetTimer()
+
+	for x := 0; x < b.N; x++ {
+		concurrency.ParallelFor(count, func(p *concurrency.P) {
+			var sharedKey [32]byte
+			for i, ok := p.Next(); ok; i, ok = p.Next() {
+				box.Precompute(&sharedKey, keys[i], priv)
+			}
+		})
 	}
 }
