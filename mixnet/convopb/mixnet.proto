@@ -11,10 +11,10 @@ service Mixnet {
 	rpc SetRoundSettings(SetRoundSettingsRequest) returns (RoundSettingsSignature) {}
 
 	rpc SetNumIncoming(SetNumIncomingRequest) returns (Nothing) {}
-	rpc AddOnions(AddOnionsRequest) returns (Nothing) {}
+	rpc AddOnions(stream AddOnionsRequest) returns (Nothing) {}
 	rpc CloseRound(CloseRoundRequest) returns (Nothing) {}
 
-	rpc GetOnions(GetOnionsRequest) returns (GetOnionsResponse) {}
+	rpc GetOnions(GetOnionsRequest) returns (stream GetOnionsResponse) {}
 	rpc DeleteRound(DeleteRoundRequest) returns (Nothing) {}
 }
 
@@ -56,10 +56,8 @@ message SetNumIncomingRequest {
 }
 
 message AddOnionsRequest {
-	string service = 1;
-	uint32 round = 2;
-	uint32 offset = 3;
-	repeated bytes onions = 4;
+	uint32 offset = 1;
+	repeated bytes onions = 2;
 }
 
 message CloseRoundRequest {
@@ -75,7 +73,8 @@ message GetOnionsRequest {
 }
 
 message GetOnionsResponse {
-	repeated bytes onions = 1;
+	uint32 offset = 1;
+	repeated bytes onions = 2;
 }
 
 message DeleteRoundRequest {

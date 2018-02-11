@@ -9,6 +9,9 @@ import (
 	cryptoRand "crypto/rand"
 	"encoding/binary"
 	"fmt"
+	"io"
+	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
@@ -18,6 +21,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
@@ -59,8 +63,9 @@ type Server struct {
 	roundsMu sync.RWMutex
 	rounds   map[serviceRound]*roundState
 
-	once      sync.Once
-	mixClient *Client
+	once           sync.Once
+	mixClient      *Client
+	decryptionJobs chan decryptionJob
 }
 
 type serviceRound struct {
@@ -73,17 +78,21 @@ type roundState struct {
 	settingsSignature []byte
 	numIncoming       uint32
 	incoming          [][]byte
-	sharedKeys        []*[32]byte
+	sharedKeys        [][32]byte
 	incomingIndex     []int
 	replies           [][]byte
+	acceptingOnions   bool
+	decryptWg         sync.WaitGroup
+	encryptDone       chan struct{}
 	closed            bool
 	err               error
 
-	chain           []PublicServerConfig
-	myPos           int
-	onionPrivateKey *[32]byte
-	onionPublicKey  *[32]byte
-	nextServerKeys  []*[32]byte
+	chain             []PublicServerConfig
+	myPos             int
+	incomingOnionSize int
+	onionPrivateKey   *[32]byte
+	onionPublicKey    *[32]byte
+	nextServerKeys    []*[32]byte
 
 	noise     [][]byte
 	noiseDone chan struct{}
@@ -168,7 +177,23 @@ func (srv *Server) NewRound(ctx context.Context, req *pb.NewRoundRequest) (*pb.N
 		return nil, err
 	}
 
+	srv.once.Do(func() {
+		srv.mixClient = &Client{
+			Key: srv.SigningKey,
+		}
+
+		workers := runtime.NumCPU() * 2
+		srv.decryptionJobs = make(chan decryptionJob, workers)
+		for i := 0; i < workers; i++ {
+			go decryptionWorker(srv.decryptionJobs)
+		}
+	})
+
 	log.WithFields(log.Fields{"rpc": "NewRound", "round": req.Round}).Info()
+	service, ok := srv.Services[req.Service]
+	if !ok {
+		return nil, errors.New("unknown service: %q", req.Service)
+	}
 
 	srv.roundsMu.Lock()
 	if srv.rounds == nil {
@@ -204,10 +229,13 @@ func (srv *Server) NewRound(ctx context.Context, req *pb.NewRoundRequest) (*pb.N
 	}
 
 	st = &roundState{
-		chain:           chain,
-		myPos:           myPos,
-		onionPublicKey:  public,
-		onionPrivateKey: private,
+		encryptDone: make(chan struct{}),
+
+		chain:             chain,
+		myPos:             myPos,
+		incomingOnionSize: (len(chain)-myPos)*onionbox.Overhead + service.SizeIncomingMessage(),
+		onionPublicKey:    public,
+		onionPrivateKey:   private,
 	}
 
 	srv.roundsMu.Lock()
@@ -298,9 +326,11 @@ func (srv *Server) SetNumIncoming(ctx context.Context, req *pb.SetNumIncomingReq
 	defer st.mu.Unlock()
 
 	if st.numIncoming == 0 {
+		st.acceptingOnions = true
 		st.numIncoming = req.NumIncoming
 		st.incoming = make([][]byte, req.NumIncoming)
-		st.sharedKeys = make([]*[32]byte, req.NumIncoming)
+		// Allocate all the shared keys upfront.
+		st.sharedKeys = make([][32]byte, req.NumIncoming)
 		return &pb.Nothing{}, nil
 	}
 	if st.numIncoming == req.NumIncoming {
@@ -311,65 +341,115 @@ func (srv *Server) SetNumIncoming(ctx context.Context, req *pb.SetNumIncomingReq
 	return nil, fmt.Errorf("round %d: numIncoming already set to %d", req.Round, req.NumIncoming)
 }
 
-// Add is an RPC used to add onions to the mix.
-func (srv *Server) AddOnions(ctx context.Context, req *pb.AddOnionsRequest) (*pb.Nothing, error) {
-	st, err := srv.getRound(req.Service, req.Round)
-	if err != nil {
-		return nil, err
+type decryptionJob struct {
+	st    *roundState
+	round uint32
+	req   *pb.AddOnionsRequest
+}
+
+func decryptionWorker(in chan decryptionJob) {
+	var theirPublic [32]byte
+	for job := range in {
+		st := job.st
+		nonce := ForwardNonce(job.round)
+		offset := int(job.req.Offset)
+		expectedSize := st.incomingOnionSize
+		for i, onion := range job.req.Onions {
+			if len(onion) != expectedSize {
+				log.Infof("onion is unexpected size: got %d, want %d", len(onion), expectedSize)
+				continue
+			}
+
+			copy(theirPublic[:], onion[0:32])
+			box.Precompute(&st.sharedKeys[offset+i], &theirPublic, st.onionPrivateKey)
+
+			// TODO we could avoid allocating here, but is it worth it?
+			msg, ok := box.OpenAfterPrecomputation(nil, onion[32:], nonce, &st.sharedKeys[offset+i])
+			st.incoming[offset+i] = msg
+			if !ok {
+				log.WithFields(log.Fields{"rpc": "AddOnions", "round": job.round}).Error("Decrypting onion failed")
+			}
+		}
+
+		st.decryptWg.Done()
 	}
-	if err := srv.authPrev(ctx, st); err != nil {
-		return nil, err
+}
+
+func parseMetadata(ctx context.Context) (service string, round uint32, err error) {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		err = errors.New("no metadata provided")
+		return
 	}
 
-	log.WithFields(log.Fields{"rpc": "AddOnions", "round": req.Round, "onions": len(req.Onions)}).Debug()
+	if md["service"] == nil {
+		err = errors.New("missing service in metadata")
+		return
+	}
+	service = md["service"][0]
+
+	if md["round"] == nil {
+		err = errors.New("missing round in metadata")
+		return
+	}
+
+	r, err := strconv.ParseUint(md["round"][0], 10, 32)
+	if err != nil {
+		err = errors.New("invalid round: %q", md["round"][0])
+		return
+	}
+	round = uint32(r)
+
+	return
+}
+
+func (srv *Server) AddOnions(stream pb.Mixnet_AddOnionsServer) error {
+	service, round, err := parseMetadata(stream.Context())
+	if err != nil {
+		return err
+	}
+
+	st, err := srv.getRound(service, round)
+	if err != nil {
+		return err
+	}
+	if err := srv.authPrev(stream.Context(), st); err != nil {
+		return err
+	}
 
 	st.mu.Lock()
 	numIncoming := st.numIncoming
-	st.mu.Unlock()
 	if numIncoming == 0 {
-		return nil, fmt.Errorf("did not set numIncoming")
+		st.mu.Unlock()
+		return errors.New("did not set numIncoming")
 	}
-	if req.Offset+uint32(len(req.Onions)) > numIncoming {
-		return nil, fmt.Errorf("overflowing onions (offset=%d, onions=%d, incoming=%d)", req.Offset, len(req.Onions), st.numIncoming)
-	}
+	st.mu.Unlock()
 
-	service := srv.Services[req.Service]
-	nonce := ForwardNonce(req.Round)
-	expectedOnionSize := (len(st.chain)-st.myPos)*onionbox.Overhead + service.SizeIncomingMessage()
+	for {
+		req, err := stream.Recv()
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return err
+		}
 
-	messages := make([][]byte, len(req.Onions))
-	sharedKeys := make([]*[32]byte, len(req.Onions))
-	for i, onion := range req.Onions {
-		if len(onion) == expectedOnionSize {
-			var theirPublic [32]byte
-			copy(theirPublic[:], onion[0:32])
+		if req.Offset+uint32(len(req.Onions)) > numIncoming {
+			return errors.New("overflowing onions (offset=%d, onions=%d, incoming=%d)", req.Offset, len(req.Onions), st.numIncoming)
+		}
 
-			sharedKey := new([32]byte)
-			box.Precompute(sharedKey, &theirPublic, st.onionPrivateKey)
-
-			message, ok := box.OpenAfterPrecomputation(nil, onion[32:], nonce, sharedKey)
-			if ok {
-				messages[i] = message
-				sharedKeys[i] = sharedKey
-			} else {
-				log.WithFields(log.Fields{"rpc": "AddOnions", "round": req.Round}).Error("Decrypting onion failed")
+		st.mu.Lock()
+		if st.acceptingOnions {
+			st.decryptWg.Add(1)
+			srv.decryptionJobs <- decryptionJob{
+				st:    st,
+				round: round,
+				req:   req,
 			}
 		}
+		st.mu.Unlock()
 	}
 
-	st.mu.Lock()
-	defer st.mu.Unlock()
-
-	if st.closed {
-		return nil, errors.New("round %d closed", req.Round)
-	}
-	for i := range messages {
-		j := req.Offset + uint32(i)
-		st.incoming[j] = messages[i]
-		st.sharedKeys[j] = sharedKeys[i]
-	}
-
-	return &pb.Nothing{}, nil
+	return nil
 }
 
 func (srv *Server) filterIncoming(st *roundState) {
@@ -407,24 +487,35 @@ func (srv *Server) CloseRound(ctx context.Context, req *pb.CloseRoundRequest) (*
 	}
 
 	st.mu.Lock()
-	defer st.mu.Unlock()
-
 	if st.closed {
+		st.mu.Unlock()
 		return &pb.Nothing{}, st.err
 	}
+	// Don't allow new decryption jobs.
+	st.acceptingOnions = false
+	st.mu.Unlock()
+
+	// Wait for outstanding decryption jobs to finish.
+	st.decryptWg.Wait()
+
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
 	st.closed = true
 
 	logger := log.WithFields(log.Fields{
+		"srv":    st.myPos,
 		"rpc":    "CloseRound",
 		"round":  req.Round,
 		"onions": len(st.incoming),
 	})
+	logger.Info("Closing round")
 
 	srv.filterIncoming(st)
 
+	var replies [][]byte
 	// if not last server
 	if st.myPos < len(st.chain)-1 {
-		start := time.Now()
 		<-st.noiseDone
 		numNonNoise := len(st.incoming)
 		outgoing := append(st.incoming, st.noise...)
@@ -434,75 +525,83 @@ func (srv *Server) CloseRound(ctx context.Context, req *pb.CloseRoundRequest) (*
 		shuffler := shuffle.New(rand.Reader, len(outgoing))
 		shuffler.Shuffle(outgoing)
 
-		srv.once.Do(func() {
-			srv.mixClient = &Client{
-				Key: srv.SigningKey,
-			}
-		})
-		replies, err := srv.mixClient.RunRound(ctx, st.chain[st.myPos+1], req.Service, req.Round, outgoing)
+		replies, err = srv.mixClient.RunRound(ctx, st.chain[st.myPos+1], req.Service, req.Round, outgoing)
 		if err != nil {
-			return nil, errors.New("RunRound: %s", err)
+			return nil, errors.New("RunRound %d->%d: %s", st.myPos, st.myPos+1, err)
 		}
 
 		shuffler.Unshuffle(replies)
 		// drop the noise
-		st.replies = replies[:numNonNoise]
-		duration := time.Now().Sub(start)
-		logger.WithFields(log.Fields{"duration": duration}).Infof("Ready to return onions")
+		replies = replies[:numNonNoise]
 	} else {
 		start := time.Now()
-		st.replies = srv.Services[req.Service].SortReplies(st.incoming)
+		replies = srv.Services[req.Service].SortReplies(st.incoming)
 		duration := time.Now().Sub(start)
 		logger.WithFields(log.Fields{"duration": duration}).Infof("Sorted replies")
 
 		st.incoming = nil
 	}
 
+	// Encrypt the replies.
+	st.replies = make([][]byte, len(st.incomingIndex))
+	go func() {
+		replyMsgSize := (len(st.chain)-st.myPos-1)*box.Overhead + srv.Services[req.Service].SizeReplyMessage()
+		concurrency.ParallelFor(len(st.replies), func(p *concurrency.P) {
+			freshKey := new([32]byte)
+			nonce := BackwardNonce(req.Round)
+			var key *[32]byte
+			emptyMsg := make([]byte, replyMsgSize)
+			for i, ok := p.Next(); ok; i, ok = p.Next() {
+				var msg []byte
+				v := st.incomingIndex[i]
+				if v > -1 {
+					msg = replies[v]
+					key = &st.sharedKeys[i]
+				}
+				if len(msg) != replyMsgSize {
+					msg = emptyMsg
+					rand.Read(freshKey[:])
+					key = freshKey
+				}
+
+				st.replies[i] = box.SealAfterPrecomputation(nil, msg, nonce, key)
+			}
+		})
+		close(st.encryptDone)
+	}()
+
 	return &pb.Nothing{}, nil
 }
 
-func (srv *Server) GetOnions(ctx context.Context, req *pb.GetOnionsRequest) (*pb.GetOnionsResponse, error) {
+func (srv *Server) GetOnions(req *pb.GetOnionsRequest, stream pb.Mixnet_GetOnionsServer) error {
 	st, err := srv.getRound(req.Service, req.Round)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if err := srv.authPrev(ctx, st); err != nil {
-		return nil, err
-	}
-
-	log.WithFields(log.Fields{"rpc": "Get", "round": req.Round, "offset": req.Offset}).Debug()
-
-	st.mu.Lock()
-	closed := st.closed
-	st.mu.Unlock()
-	if !closed {
-		return nil, errors.New("round not closed")
+	if err := srv.authPrev(stream.Context(), st); err != nil {
+		return err
 	}
 
-	nonce := BackwardNonce(req.Round)
+	// Wait for replies to finish encrypting.
+	<-st.encryptDone
 
-	replyMsgSize := srv.Services[req.Service].SizeReplyMessage()
-	replies := make([][]byte, req.Count)
-	for i := range replies {
-		j := req.Offset + uint32(i)
+	if req.Offset+req.Count > uint32(len(st.replies)) {
+		return errors.New("invalid offset and count (offset=%d count=%d replies=%d)", req.Offset, req.Count, len(st.replies))
+	}
+	replies := st.replies[req.Offset : req.Offset+req.Count]
 
-		var msg []byte
-		var key *[32]byte
-		if v := st.incomingIndex[j]; v > -1 {
-			msg = st.replies[v]
-			key = st.sharedKeys[j]
-		} else {
-			msg = make([]byte, replyMsgSize)
-			key = new([32]byte)
-			rand.Read(key[:])
+	spans := concurrency.Spans(len(replies), 16)
+	for _, span := range spans {
+		err := stream.Send(&pb.GetOnionsResponse{
+			Offset: req.Offset + uint32(span.Start),
+			Onions: replies[span.Start : span.Start+span.Count],
+		})
+		if err != nil {
+			return err
 		}
-
-		replies[i] = box.SealAfterPrecomputation(nil, msg, nonce, key)
 	}
 
-	return &pb.GetOnionsResponse{
-		Onions: replies,
-	}, nil
+	return nil
 }
 
 func (srv *Server) DeleteRound(ctx context.Context, req *pb.DeleteRoundRequest) (*pb.Nothing, error) {
@@ -544,7 +643,14 @@ func (c *Client) getConn(server PublicServerConfig) (pb.MixnetClient, error) {
 		creds := credentials.NewTLS(edtls.NewTLSClientConfig(c.Key, server.Key))
 
 		var err error
-		cc, err = grpc.Dial(server.Address, grpc.WithTransportCredentials(creds))
+		opts := []grpc.DialOption{
+			grpc.WithTransportCredentials(creds),
+			grpc.WithWriteBufferSize(128 * 1024),
+			grpc.WithReadBufferSize(128 * 1024),
+			grpc.WithInitialWindowSize(2 << 18),
+			grpc.WithInitialConnWindowSize(2 << 18),
+		}
+		cc, err = grpc.Dial(server.Address, opts...)
 		if err != nil {
 			return nil, err
 		}
@@ -608,6 +714,26 @@ func (c *Client) NewRound(ctx context.Context, servers []PublicServerConfig, set
 	return signatures, nil
 }
 
+func streamAddOnions(ctx context.Context, conn pb.MixnetClient, offset int, onions [][]byte) error {
+	spans := concurrency.Spans(len(onions), 16)
+	stream, err := conn.AddOnions(ctx)
+	if err != nil {
+		return err
+	}
+
+	for _, span := range spans {
+		err := stream.Send(&pb.AddOnionsRequest{
+			Offset: uint32(offset + span.Start),
+			Onions: onions[span.Start : span.Start+span.Count],
+		})
+		if err != nil {
+			return err
+		}
+	}
+	stream.CloseAndRecv()
+	return nil
+}
+
 func (c *Client) RunRound(ctx context.Context, server PublicServerConfig, service string, round uint32, onions [][]byte) ([][]byte, error) {
 	conn, err := c.getConn(server)
 	if err != nil {
@@ -623,22 +749,24 @@ func (c *Client) RunRound(ctx context.Context, server PublicServerConfig, servic
 		return nil, err
 	}
 
-	start := time.Now()
+	md := metadata.Pairs(
+		"service", service,
+		"round", fmt.Sprintf("%d", round),
+	)
+	addCtx := metadata.NewOutgoingContext(ctx, md)
+
+	numSpans := len(onions) / 5
+	if numSpans == 0 {
+		numSpans = 1
+	}
+	spans := concurrency.Spans(len(onions), numSpans)
 	errs := make(chan error, 1)
-	spans := concurrency.Spans(len(onions), 4000)
+	start := time.Now()
 	for _, span := range spans {
 		go func(span concurrency.Span) {
-			req := &pb.AddOnionsRequest{
-				Service: service,
-				Round:   round,
-				Offset:  uint32(span.Start),
-				Onions:  onions[span.Start : span.Start+span.Count],
-			}
-			_, err := conn.AddOnions(ctx, req)
-			errs <- err
+			errs <- streamAddOnions(addCtx, conn, span.Start, onions[span.Start:span.Start+span.Count])
 		}(span)
 	}
-
 	var addErr error
 	for i := 0; i < len(spans); i++ {
 		err := <-errs
@@ -647,11 +775,12 @@ func (c *Client) RunRound(ctx context.Context, server PublicServerConfig, servic
 		}
 	}
 	if addErr != nil {
-		return nil, addErr
+		return nil, errors.Wrap(addErr, "adding onions")
 	}
 	duration := time.Now().Sub(start)
-	log.WithFields(log.Fields{"round": round, "duration": duration, "onions": len(onions)}).Infof("RunRound: added onions to next mixer")
+	log.WithFields(log.Fields{"round": round, "duration": duration, "onions": len(onions), "sizeOnion": len(onions[0])}).Infof("RunRound: added onions to next mixer")
 
+	start = time.Now()
 	closeReq := &pb.CloseRoundRequest{
 		Service: service,
 		Round:   round,
@@ -660,25 +789,39 @@ func (c *Client) RunRound(ctx context.Context, server PublicServerConfig, servic
 	if closeErr != nil {
 		return nil, closeErr
 	}
+	duration = time.Now().Sub(start)
+	log.WithFields(log.Fields{"round": round, "duration": duration, "onions": len(onions)}).Infof("RunRound: closed round")
 
 	start = time.Now()
 	replies := make([][]byte, len(onions))
+	spans = concurrency.Spans(len(replies), numSpans)
+	getOnions := func(span concurrency.Span) error {
+		stream, err := conn.GetOnions(ctx, &pb.GetOnionsRequest{
+			Service: service,
+			Round:   round,
+			Offset:  uint32(span.Start),
+			Count:   uint32(span.Count),
+		})
+		if err != nil {
+			return err
+		}
+		for {
+			resp, err := stream.Recv()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return err
+			}
+			copy(replies[resp.Offset:], resp.Onions)
+		}
+		return nil
+	}
 	for _, span := range spans {
 		go func(span concurrency.Span) {
-			req := &pb.GetOnionsRequest{
-				Service: service,
-				Round:   round,
-				Offset:  uint32(span.Start),
-				Count:   uint32(span.Count),
-			}
-			resp, err := conn.GetOnions(ctx, req)
-			if err == nil {
-				copy(replies[span.Start:span.Start+span.Count], resp.Onions)
-			}
-			errs <- err
+			errs <- getOnions(span)
 		}(span)
 	}
-
 	var getErr error
 	for i := 0; i < len(spans); i++ {
 		err := <-errs
@@ -687,15 +830,22 @@ func (c *Client) RunRound(ctx context.Context, server PublicServerConfig, servic
 		}
 	}
 	if getErr != nil {
-		return nil, getErr
+		return nil, errors.Wrap(getErr, "fetching onions")
 	}
 	duration = time.Now().Sub(start)
-	log.WithFields(log.Fields{"round": round, "duration": duration, "onions": len(onions)}).Infof("RunRound: fetched onions from prev mixer")
+	log.WithFields(log.Fields{"round": round, "duration": duration, "onions": len(onions)}).Infof("RunRound: fetched onions from mixer")
 
-	_, err = conn.DeleteRound(ctx, &pb.DeleteRoundRequest{
-		Service: service,
-		Round:   round,
-	})
+	// Delete the round asynchronously.
+	go func() {
+		_, err := conn.DeleteRound(context.Background(), &pb.DeleteRoundRequest{
+			Service: service,
+			Round:   round,
+		})
+		if err != nil {
+			log.WithFields(log.Fields{"round": round}).Errorf("RunRound: failed to delete round: %s", err)
+		}
+	}()
+
 	return replies, err
 }
 

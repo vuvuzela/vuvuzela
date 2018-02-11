@@ -69,7 +69,14 @@ func LaunchMixchain(length int, coordinatorKey ed25519.PublicKey) *Mixchain {
 
 		creds := credentials.NewTLS(edtls.NewTLSServerConfig(privateKeys[pos]))
 
-		grpcServer := grpc.NewServer(grpc.Creds(creds))
+		opts := []grpc.ServerOption{
+			grpc.Creds(creds),
+			grpc.WriteBufferSize(128 * 1024),
+			grpc.ReadBufferSize(128 * 1024),
+			grpc.InitialWindowSize(2 << 18),
+			grpc.InitialConnWindowSize(2 << 18),
+		}
+		grpcServer := grpc.NewServer(opts...)
 		convopb.RegisterMixnetServer(grpcServer, mixer)
 
 		mixServers[pos] = mixer
