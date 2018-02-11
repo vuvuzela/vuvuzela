@@ -9,6 +9,8 @@ import (
 	"context"
 	"crypto/rand"
 	"flag"
+	"os"
+	"runtime/pprof"
 	"testing"
 	"time"
 
@@ -148,6 +150,11 @@ func TestMixnetPerformance(t *testing.T) {
 		Key: coordinatorPrivate,
 	}
 
+	f, err := os.OpenFile("mixnet.pprof", os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	for round := uint32(1); round <= 2; round++ {
 		settings := &mixnet.RoundSettings{
 			Service: "Convo",
@@ -180,12 +187,20 @@ func TestMixnetPerformance(t *testing.T) {
 		})
 
 		log.Warnf("Running round")
+		if round == 2 {
+			if err := pprof.StartCPUProfile(f); err != nil {
+				log.Fatal(err)
+			}
+		}
 		start := time.Now()
 		replies, err := coordinatorClient.RunRound(context.Background(), mixchain.Servers[0], "Convo", round, onions)
 		if err != nil {
 			log.Fatalf("mixnet.RunRound: %s", err)
 		}
 		duration := time.Now().Sub(start)
+		if round == 2 {
+			pprof.StopCPUProfile()
+		}
 		log.Warnf("RunRound took %s -- chainLen=%d  numMsgs=%d", duration, *chainLen, *numMsgs)
 
 		if len(replies) != len(onions) {
