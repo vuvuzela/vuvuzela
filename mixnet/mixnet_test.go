@@ -8,7 +8,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"flag"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ed25519"
 	"google.golang.org/grpc/codes"
@@ -16,6 +18,7 @@ import (
 
 	"vuvuzela.io/alpenhorn/errors"
 	"vuvuzela.io/alpenhorn/log"
+	"vuvuzela.io/concurrency"
 	"vuvuzela.io/crypto/onionbox"
 	"vuvuzela.io/vuvuzela/convo"
 	"vuvuzela.io/vuvuzela/internal/mock"
@@ -125,5 +128,67 @@ func TestAuth(t *testing.T) {
 	}
 	if st.Code() != codes.Unauthenticated {
 		t.Fatalf("unexpected status: %s", st)
+	}
+}
+
+var chainLen = flag.Int("chainlen", 6, "chain length in TestLongerMixnet")
+var numMsgs = flag.Int("numMsgs", 1000, "number of messages in TestLongerMixnet")
+
+func TestMain(t *testing.T) {
+	flag.Parse()
+}
+
+func TestMixnetPerformance(t *testing.T) {
+	coordinatorPublic, coordinatorPrivate, _ := ed25519.GenerateKey(rand.Reader)
+
+	mixchain := mock.LaunchMixchain(*chainLen, coordinatorPublic)
+
+	coordinatorClient := &mixnet.Client{
+		Key: coordinatorPrivate,
+	}
+
+	for round := uint32(1); round <= 2; round++ {
+		settings := &mixnet.RoundSettings{
+			Service: "Convo",
+			Round:   round,
+		}
+
+		log.Warnf("Starting new round")
+		sigs, err := coordinatorClient.NewRound(context.Background(), mixchain.Servers, settings)
+		if err != nil {
+			log.Fatalf("mixnet.NewRound: %s", err)
+		}
+		settingsMsg := settings.SigningMessage()
+		for i, sig := range sigs {
+			if !ed25519.Verify(mixchain.Servers[i].Key, settingsMsg, sig) {
+				log.Fatalf("failed to verify round settings from mixer %d", i+1)
+			}
+		}
+
+		log.Warnf("Generating onions")
+		onions := make([][]byte, *numMsgs)
+		onionKeys := make([][]*[32]byte, *numMsgs)
+		lenMsg := len((&convo.DeadDropMessage{}).Marshal())
+		nonce := mixnet.ForwardNonce(settings.Round)
+		concurrency.ParallelFor(*numMsgs, func(p *concurrency.P) {
+			for i, ok := p.Next(); ok; i, ok = p.Next() {
+				msg := make([]byte, lenMsg)
+				rand.Read(msg)
+				onions[i], onionKeys[i] = onionbox.Seal(msg, nonce, settings.OnionKeys)
+			}
+		})
+
+		log.Warnf("Running round")
+		start := time.Now()
+		replies, err := coordinatorClient.RunRound(context.Background(), mixchain.Servers[0], "Convo", round, onions)
+		if err != nil {
+			log.Fatalf("mixnet.RunRound: %s", err)
+		}
+		duration := time.Now().Sub(start)
+		log.Warnf("RunRound took %s -- chainLen=%d  numMsgs=%d", duration, *chainLen, *numMsgs)
+
+		if len(replies) != len(onions) {
+			log.Fatalf("unexpected number of reply onions: got %d, want %d", len(replies), len(onions))
+		}
 	}
 }
