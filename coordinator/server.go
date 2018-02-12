@@ -6,6 +6,8 @@
 package coordinator
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"golang.org/x/net/context"
 
 	"vuvuzela.io/alpenhorn/config"
+	"vuvuzela.io/alpenhorn/edtls"
 	"vuvuzela.io/alpenhorn/errors"
 	"vuvuzela.io/alpenhorn/log"
 	"vuvuzela.io/alpenhorn/typesocket"
@@ -43,6 +46,7 @@ type Server struct {
 	closed         bool
 	shutdown       chan struct{}
 	latestMixRound *MixRound
+	latestConfig   *config.SignedConfig
 
 	hub          *typesocket.Hub
 	mixnetClient *mixnet.Client
@@ -100,6 +104,8 @@ func (srv *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasPrefix(r.URL.Path, "/ws"):
 		srv.hub.ServeHTTP(w, r)
+	case strings.HasPrefix(r.URL.Path, "/sendannouncement"):
+		srv.sendAnnouncementHandler(w, r)
 	default:
 		http.Error(w, "not found", http.StatusNotFound)
 	}
@@ -124,6 +130,58 @@ type MixRound struct {
 type RoundError struct {
 	Round uint32
 	Err   string
+}
+
+type GlobalAnnouncement struct {
+	Message string
+}
+
+func (srv *Server) sendAnnouncementHandler(w http.ResponseWriter, req *http.Request) {
+	if len(req.TLS.PeerCertificates) == 0 {
+		http.Error(w, "no peer certificate", http.StatusBadRequest)
+		return
+	}
+	key := edtls.GetSigningKey(req.TLS.PeerCertificates[0])
+	if len(key) != ed25519.PublicKeySize {
+		http.Error(w, "invalid peer key", http.StatusBadRequest)
+		return
+	}
+
+	srv.mu.Lock()
+	conf := srv.latestConfig
+	srv.mu.Unlock()
+	if conf == nil {
+		http.Error(w, "no convo config", http.StatusBadRequest)
+		return
+	}
+
+	gx := -1
+	for i, g := range conf.Guardians {
+		if bytes.Equal(g.Key, key) {
+			gx = i
+			break
+		}
+	}
+	if gx == -1 {
+		http.Error(w, "not a guardian", http.StatusBadRequest)
+		return
+	}
+
+	body := http.MaxBytesReader(w, req.Body, 4096)
+	args := GlobalAnnouncement{}
+	err := json.NewDecoder(body).Decode(&args)
+	if err != nil {
+		http.Error(w, "error decoding json", http.StatusBadRequest)
+		return
+	}
+
+	err = srv.hub.Broadcast("announcement", args)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to broadcast message: %s", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Write([]byte("OK"))
 }
 
 func (srv *Server) onConnect(c typesocket.Conn) error {
@@ -174,6 +232,7 @@ func (srv *Server) loop() {
 		mixServers := currentConfig.Inner.(*convo.ConvoConfig).MixServers
 
 		srv.mu.Lock()
+		srv.latestConfig = currentConfig
 		srv.round++
 		round := srv.round
 
