@@ -46,6 +46,7 @@ type ConvoHandler interface {
 	Replies(round uint32, messages [][]byte)
 	NewConfig(chain []*config.SignedConfig)
 	Error(err error)
+	GlobalAnnouncement(message string)
 }
 
 func (c *Client) ConnectConvo() (chan error, error) {
@@ -96,11 +97,16 @@ func (c *Client) CloseConvo() error {
 
 func (c *Client) convoMux() typesocket.Mux {
 	return typesocket.NewMux(map[string]interface{}{
-		"newround": c.newConvoRound,
-		"mix":      c.sendConvoOnion,
-		"reply":    c.openReplyOnion,
-		"error":    c.convoRoundError,
+		"announcement": c.globalAnnouncement,
+		"newround":     c.newConvoRound,
+		"mix":          c.sendConvoOnion,
+		"reply":        c.openReplyOnion,
+		"error":        c.convoRoundError,
 	})
+}
+
+func (c *Client) globalAnnouncement(conn typesocket.Conn, v coordinator.GlobalAnnouncement) {
+	c.Handler.GlobalAnnouncement(v.Message)
 }
 
 func (c *Client) convoRoundError(conn typesocket.Conn, v coordinator.RoundError) {

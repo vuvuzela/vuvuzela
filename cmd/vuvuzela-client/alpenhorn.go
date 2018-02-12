@@ -85,3 +85,8 @@ func (gc *GuiClient) NewConfig(chain []*config.SignedConfig) {
 	gc.WarnfSync("New %q config: %s -> %s\n", prev.Service, prev.Hash(), next.Hash())
 	notify("New %s config", prev.Service)
 }
+
+func (gc *GuiClient) GlobalAnnouncement(message string) {
+	gc.WarnfSync("Global Announcement: %s", message)
+	notify("Global Announcement: %s", message)
+}
