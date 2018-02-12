@@ -778,7 +778,11 @@ func (c *Client) RunRound(ctx context.Context, server PublicServerConfig, servic
 		return nil, errors.Wrap(addErr, "adding onions")
 	}
 	duration := time.Now().Sub(start)
-	log.WithFields(log.Fields{"round": round, "duration": duration, "onions": len(onions), "sizeOnion": len(onions[0])}).Infof("RunRound: added onions to next mixer")
+	sizeOnion := 0
+	if len(onions) > 0 {
+		sizeOnion = len(onions[0])
+	}
+	log.WithFields(log.Fields{"round": round, "duration": duration, "onions": len(onions), "sizeOnion": sizeOnion}).Infof("RunRound: added onions to next mixer")
 
 	start = time.Now()
 	closeReq := &pb.CloseRoundRequest{
