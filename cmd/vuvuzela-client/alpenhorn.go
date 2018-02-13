@@ -87,6 +87,6 @@ func (gc *GuiClient) NewConfig(chain []*config.SignedConfig) {
 }
 
 func (gc *GuiClient) GlobalAnnouncement(message string) {
-	gc.WarnfSync("Global Announcement: %s", message)
+	gc.WarnfSync("Global Announcement: %s\n", message)
 	notify("Global Announcement: %s", message)
 }
