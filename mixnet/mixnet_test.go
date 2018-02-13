@@ -130,7 +130,7 @@ func TestAuth(t *testing.T) {
 		t.Fatalf("unexpected error: %s", err)
 	}
 	if st.Code() != codes.Unauthenticated {
-		t.Fatalf("unexpected status: %s", st)
+		t.Fatalf("unexpected status: %v", st)
 	}
 }
 
