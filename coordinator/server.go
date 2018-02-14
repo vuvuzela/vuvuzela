@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/ed25519"
@@ -35,21 +36,30 @@ type Server struct {
 
 	ConfigClient *config.Client
 
-	MixWait   time.Duration
-	RoundWait time.Duration
+	RoundDelay time.Duration
 
 	PersistPath string
 
-	mu             sync.Mutex
-	round          uint32
-	onions         []onionBundle
-	closed         bool
-	shutdown       chan struct{}
-	latestMixRound *MixRound
-	latestConfig   *config.SignedConfig
+	// round is updated atomically.
+	round uint32
+
+	mu           sync.Mutex
+	rounds       map[uint32]*roundState
+	closed       bool
+	shutdown     chan struct{}
+	freshConfig  bool
+	latestConfig *config.SignedConfig
 
 	hub          *typesocket.Hub
 	mixnetClient *mixnet.Client
+}
+
+type roundState struct {
+	roundInfo *NewRound
+
+	mu     sync.Mutex
+	open   bool
+	onions []onionBundle
 }
 
 type onionBundle struct {
@@ -76,12 +86,17 @@ func (srv *Server) Run() error {
 	}
 
 	srv.mu.Lock()
-	srv.onions = make([]onionBundle, 0, 128)
+	srv.rounds = make(map[uint32]*roundState)
 	srv.closed = false
 	srv.shutdown = make(chan struct{})
 	srv.mu.Unlock()
 
+	go srv.updateConfigLoop()
+	// Give the config loop a chance before firing up the main loop.
+	time.Sleep(2 * time.Second)
+
 	go srv.loop()
+
 	return nil
 }
 
@@ -117,11 +132,8 @@ type OnionMsg struct {
 }
 
 type NewRound struct {
-	Round      uint32
-	ConfigHash string
-}
-
-type MixRound struct {
+	Round         uint32
+	ConfigHash    string
 	MixSettings   mixnet.RoundSettings
 	MixSignatures [][]byte
 	EndTime       time.Time
@@ -185,12 +197,18 @@ func (srv *Server) sendAnnouncementHandler(w http.ResponseWriter, req *http.Requ
 }
 
 func (srv *Server) onConnect(c typesocket.Conn) error {
+	rounds := make([]*roundState, 0, 4)
 	srv.mu.Lock()
-	mixRound := srv.latestMixRound
+	for _, st := range srv.rounds {
+		rounds = append(rounds, st)
+	}
 	srv.mu.Unlock()
 
-	if mixRound != nil {
-		err := c.Send("mix", mixRound)
+	for _, st := range rounds {
+		if time.Until(st.roundInfo.EndTime) < 100*time.Millisecond {
+			continue
+		}
+		err := c.Send("newround", st.roundInfo)
 		if err != nil {
 			return err
 		}
@@ -201,104 +219,151 @@ func (srv *Server) onConnect(c typesocket.Conn) error {
 
 func (srv *Server) incomingOnion(c typesocket.Conn, o OnionMsg) {
 	srv.mu.Lock()
-	round := srv.round
-	if o.Round == round {
-		srv.onions = append(srv.onions, onionBundle{
+	st, ok := srv.rounds[o.Round]
+	srv.mu.Unlock()
+	if !ok {
+		c.Send("error", RoundError{
+			Round: o.Round,
+			Err:   "round not found",
+		})
+		return
+	}
+
+	ok = false
+	st.mu.Lock()
+	if st.open {
+		st.onions = append(st.onions, onionBundle{
 			sender: c,
 			onions: o.Onions,
 		})
+		ok = true
 	}
-	srv.mu.Unlock()
-	if o.Round != round {
-		log.Errorf("got onion for wrong round (want %d, got %d)", round, o.Round)
+	st.mu.Unlock()
+
+	if !ok {
 		c.Send("error", RoundError{
 			Round: o.Round,
-			Err:   fmt.Sprintf("wrong round (want %d)", round),
+			Err:   fmt.Sprintf("round is closed: deadline was %s ago", time.Now().Sub(st.roundInfo.EndTime)),
 		})
 	}
 }
 
-func (srv *Server) loop() {
+func (srv *Server) updateConfigLoop() {
 	for {
+		log.Infof("Fetching latest config")
+
 		currentConfig, err := srv.ConfigClient.CurrentConfig(srv.Service)
 		if err != nil {
 			log.Errorf("failed to fetch current config: %s", err)
-			if !srv.sleep(10 * time.Second) {
-				break
-			}
-			continue
-		}
-		configHash := currentConfig.Hash()
-		mixServers := currentConfig.Inner.(*convo.ConvoConfig).MixServers
-
-		srv.mu.Lock()
-		srv.latestConfig = currentConfig
-		srv.round++
-		round := srv.round
-
-		logger := log.WithFields(log.Fields{"round": round})
-
-		if err := srv.persistLocked(); err != nil {
-			logger.Errorf("error persisting state: %s", err)
+			srv.mu.Lock()
+			srv.freshConfig = false
 			srv.mu.Unlock()
-			break
-		}
-		srv.mu.Unlock()
-
-		logger.Info("Starting new round")
-
-		srv.hub.Broadcast("newround", NewRound{
-			Round:      round,
-			ConfigHash: configHash,
-		})
-
-		time.Sleep(500 * time.Millisecond)
-
-		// TODO perhaps pkg.NewRound, mixnet.NewRound, hub.Broadcast, etc
-		// should take a Context for better cancelation.
-
-		mixSettings := mixnet.RoundSettings{
-			Service: "Convo",
-			Round:   round,
-		}
-		mixSigs, err := srv.mixnetClient.NewRound(context.Background(), mixServers, &mixSettings)
-		if err != nil {
-			logger.WithFields(log.Fields{"call": "mixnet.NewRound"}).Error(err)
-			if !srv.sleep(10 * time.Second) {
-				break
-			}
+			time.Sleep(10 * time.Second)
 			continue
 		}
 
-		roundEnd := time.Now().Add(srv.MixWait)
-		mixRound := &MixRound{
-			MixSettings:   mixSettings,
-			MixSignatures: mixSigs,
-			EndTime:       roundEnd,
-		}
 		srv.mu.Lock()
-		srv.latestMixRound = mixRound
+		srv.freshConfig = true
+		srv.latestConfig = currentConfig
 		srv.mu.Unlock()
 
-		logger.Info("Announcing mixnet settings")
-		srv.hub.Broadcast("mix", mixRound)
+		time.Sleep(1 * time.Minute)
+	}
+}
 
-		if !srv.sleep(srv.MixWait) {
-			break
+func (srv *Server) loop() {
+	numInFlight := 5
+	flights := make(chan struct{}, numInFlight)
+	for i := 0; i < numInFlight; i++ {
+		flights <- struct{}{}
+	}
+
+	atomic.AddUint32(&srv.round, 100)
+
+	lastDeadline := time.Now()
+	for _ = range flights {
+		round := atomic.AddUint32(&srv.round, 1)
+
+		// Persist every 20 rounds.
+		if round%uint32(20) == 0 {
+			go func() {
+				err := srv.Persist()
+				if err != nil {
+					panic(err)
+				}
+			}()
 		}
 
-		srv.mu.Lock()
-		go srv.runRound(context.Background(), mixServers[0], round, srv.onions)
-		srv.onions = make([]onionBundle, 0, len(srv.onions))
-		srv.mu.Unlock()
-
-		logger.Info("Waiting for next round")
-		if !srv.sleep(srv.RoundWait) {
-			break
-		}
+		lastDeadline = lastDeadline.Add(srv.RoundDelay)
+		go func() {
+			srv.runRound(context.Background(), round, lastDeadline)
+			flights <- struct{}{}
+		}()
 	}
 
 	log.Info("Shutting down")
+}
+
+func (srv *Server) runRound(ctx context.Context, round uint32, deadline time.Time) {
+	logger := log.WithFields(log.Fields{"round": round})
+
+	srv.mu.Lock()
+	conf := srv.latestConfig
+	isFresh := srv.freshConfig
+	srv.mu.Unlock()
+
+	if !isFresh {
+		logger.Errorf("stale config")
+		time.Sleep(10 * time.Second)
+		return
+	}
+
+	mixServers := conf.Inner.(*convo.ConvoConfig).MixServers
+	logger.Infof("Starting new round with %d mixers", len(mixServers))
+
+	mixSettings := mixnet.RoundSettings{
+		Service: "Convo",
+		Round:   round,
+	}
+	mixSigs, err := srv.mixnetClient.NewRound(context.Background(), mixServers, &mixSettings)
+	if err != nil {
+		logger.WithFields(log.Fields{"call": "mixnet.NewRound"}).Error(err)
+		return
+	}
+
+	roundInfo := &NewRound{
+		Round:         round,
+		ConfigHash:    conf.Hash(),
+		MixSettings:   mixSettings,
+		MixSignatures: mixSigs,
+		EndTime:       deadline,
+	}
+	st := &roundState{
+		roundInfo: roundInfo,
+		open:      true,
+		onions:    make([]onionBundle, 0, 512),
+	}
+	srv.mu.Lock()
+	srv.rounds[round] = st
+	srv.mu.Unlock()
+
+	logger.Info("Announcing mixnet settings")
+	srv.hub.Broadcast("newround", roundInfo)
+
+	if !srv.sleep(time.Until(deadline)) {
+		return
+	}
+
+	st.mu.Lock()
+	st.open = false
+	onions := st.onions
+	st.mu.Unlock()
+
+	srv.mixOnions(ctx, mixServers[0], round, onions)
+
+	srv.mu.Lock()
+	delete(srv.rounds, round)
+	srv.mu.Unlock()
 }
 
 func (srv *Server) sleep(d time.Duration) bool {
@@ -317,7 +382,7 @@ type senderRange struct {
 	start, end int
 }
 
-func (srv *Server) runRound(ctx context.Context, firstServer mixnet.PublicServerConfig, round uint32, out []onionBundle) {
+func (srv *Server) mixOnions(ctx context.Context, firstServer mixnet.PublicServerConfig, round uint32, out []onionBundle) {
 	numOnions := 0
 	for _, bundle := range out {
 		numOnions += len(bundle.onions)
@@ -328,7 +393,8 @@ func (srv *Server) runRound(ctx context.Context, firstServer mixnet.PublicServer
 	for i, o := range out {
 		senders[i] = senderRange{
 			sender: o.sender,
-			start:  len(onions), end: len(onions) + len(o.onions),
+			start:  len(onions),
+			end:    len(onions) + len(o.onions),
 		}
 		onions = append(onions, o.onions...)
 	}

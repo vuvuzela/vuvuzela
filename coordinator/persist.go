@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"sync/atomic"
 
 	"vuvuzela.io/internal/ioutil2"
 )
@@ -40,23 +41,15 @@ func (srv *Server) LoadPersistedState() error {
 		return err
 	}
 
-	srv.mu.Lock()
-	srv.round = st.Round
-	srv.mu.Unlock()
+	atomic.StoreUint32(&srv.round, st.Round)
 
 	return nil
 }
 
 func (srv *Server) Persist() error {
-	srv.mu.Lock()
-	err := srv.persistLocked()
-	srv.mu.Unlock()
-	return err
-}
-
-func (srv *Server) persistLocked() error {
+	round := atomic.LoadUint32(&srv.round)
 	st := &persistedState{
-		Round: srv.round,
+		Round: round,
 	}
 
 	buf := new(bytes.Buffer)

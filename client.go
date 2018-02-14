@@ -7,6 +7,7 @@ package vuvuzela
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/davidlazar/go-crypto/encoding/base32"
 	"golang.org/x/crypto/ed25519"
@@ -36,9 +37,11 @@ type Client struct {
 }
 
 type roundState struct {
-	OnionKeys    [][]*[32]byte // [msg][mixer]
 	Config       *convo.ConvoConfig
 	ConfigParent *config.SignedConfig
+
+	mu        sync.Mutex
+	OnionKeys [][]*[32]byte // [msg][mixer]
 }
 
 type ConvoHandler interface {
@@ -99,7 +102,6 @@ func (c *Client) convoMux() typesocket.Mux {
 	return typesocket.NewMux(map[string]interface{}{
 		"announcement": c.globalAnnouncement,
 		"newround":     c.newConvoRound,
-		"mix":          c.sendConvoOnion,
 		"reply":        c.openReplyOnion,
 		"error":        c.convoRoundError,
 	})
@@ -110,10 +112,15 @@ func (c *Client) globalAnnouncement(conn typesocket.Conn, v coordinator.GlobalAn
 }
 
 func (c *Client) convoRoundError(conn typesocket.Conn, v coordinator.RoundError) {
-	c.Handler.Error(errors.New("error from convo coordinator: %s", v.Err))
+	c.Handler.Error(errors.New("error from convo coordinator: round %d: %s", v.Round, v.Err))
 }
 
 func (c *Client) newConvoRound(conn typesocket.Conn, v coordinator.NewRound) {
+	if time.Until(v.EndTime) < 20*time.Millisecond {
+		c.Handler.Error(errors.New("newConvoRound %d: skipping round (only %s left)", v.Round, time.Until(v.EndTime)))
+		return
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -125,48 +132,43 @@ func (c *Client) newConvoRound(conn typesocket.Conn, v coordinator.NewRound) {
 		return
 	}
 
-	// common case
+	var conf *config.SignedConfig
 	if v.ConfigHash == c.convoConfigHash {
-		c.rounds[v.Round] = &roundState{
-			Config:       c.convoConfig.Inner.(*convo.ConvoConfig),
-			ConfigParent: c.convoConfig,
+		// common case
+		conf = c.convoConfig
+	} else {
+		// Fetch the new config.
+		configs, err := c.ConfigClient.FetchAndVerifyChain(c.convoConfig, v.ConfigHash)
+		if err != nil {
+			c.Handler.Error(errors.Wrap(err, "fetching convo config"))
+			return
 		}
-		return
+
+		c.Handler.NewConfig(configs)
+
+		newConfig := configs[0]
+		c.convoConfig = newConfig
+		c.convoConfigHash = v.ConfigHash
+
+		if err := c.persistLocked(); err != nil {
+			panic("failed to persist state: " + err.Error())
+		}
+
+		conf = newConfig
 	}
 
-	configs, err := c.ConfigClient.FetchAndVerifyChain(c.convoConfig, v.ConfigHash)
-	if err != nil {
-		c.Handler.Error(errors.Wrap(err, "fetching convo config"))
-		return
+	st = &roundState{
+		Config:       conf.Inner.(*convo.ConvoConfig),
+		ConfigParent: conf,
 	}
-
-	c.Handler.NewConfig(configs)
-
-	newConfig := configs[0]
-	c.convoConfig = newConfig
-	c.convoConfigHash = v.ConfigHash
-
-	if err := c.persistLocked(); err != nil {
-		panic("failed to persist state: " + err.Error())
-	}
-
-	c.rounds[v.Round] = &roundState{
-		Config:       newConfig.Inner.(*convo.ConvoConfig),
-		ConfigParent: newConfig,
-	}
+	c.rounds[v.Round] = st
+	// Run the rest of the round in a new goroutine to release the client lock.
+	go c.runRound(conn, st, v)
+	return
 }
 
-func (c *Client) sendConvoOnion(conn typesocket.Conn, v coordinator.MixRound) {
-	round := v.MixSettings.Round
-
-	c.mu.Lock()
-	st, ok := c.rounds[round]
-	c.mu.Unlock()
-	if !ok {
-		c.Handler.Error(errors.New("sendConvoOnion: round %d not configured", round))
-		return
-	}
-
+func (c *Client) runRound(conn typesocket.Conn, st *roundState, v coordinator.NewRound) {
+	round := v.Round
 	settingsMsg := v.MixSettings.SigningMessage()
 
 	for i, mixer := range st.Config.MixServers {
@@ -180,6 +182,13 @@ func (c *Client) sendConvoOnion(conn typesocket.Conn, v coordinator.MixRound) {
 		}
 	}
 
+	if time.Until(v.EndTime) < 180*time.Millisecond {
+		c.Handler.Error(errors.New("runRound %d: skipping round (only %s left)", v.Round, time.Until(v.EndTime)))
+		return
+	}
+
+	time.Sleep(time.Until(v.EndTime) - 150*time.Millisecond)
+
 	outgoing := c.Handler.Outgoing(round)
 	onionKeys := make([][]*[32]byte, len(outgoing))
 	onions := make([][]byte, len(outgoing))
@@ -188,10 +197,14 @@ func (c *Client) sendConvoOnion(conn typesocket.Conn, v coordinator.MixRound) {
 		onions[i], onionKeys[i] = onionbox.Seal(msg, mixnet.ForwardNonce(round), v.MixSettings.OnionKeys)
 	}
 
-	c.mu.Lock()
+	st.mu.Lock()
 	st.OnionKeys = onionKeys
-	c.mu.Unlock()
+	st.mu.Unlock()
 
+	if time.Until(v.EndTime) < 10*time.Millisecond {
+		c.Handler.Error(errors.New("runRound %d: abandoning round (only %s left)", round, time.Until(v.EndTime)))
+		return
+	}
 	conn.Send("onion", coordinator.OnionMsg{
 		Round:  round,
 		Onions: onions,
@@ -204,6 +217,15 @@ func (c *Client) openReplyOnion(conn typesocket.Conn, v coordinator.OnionMsg) {
 	c.mu.Unlock()
 	if !ok {
 		c.Handler.Error(errors.New("openReplyOnion: round %d not configured", v.Round))
+		return
+	}
+
+	st.mu.Lock()
+	onionKeys := st.OnionKeys
+	st.mu.Unlock()
+
+	if onionKeys == nil {
+		c.Handler.Error(errors.New("openReplyOnion: didn't generate onion keys for round %d", v.Round))
 		return
 	}
 

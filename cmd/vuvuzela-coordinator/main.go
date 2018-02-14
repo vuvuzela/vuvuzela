@@ -40,7 +40,6 @@ type Config struct {
 	LogsDir    string
 
 	RoundDelay time.Duration
-	MixWait    time.Duration
 }
 
 var funcMap = template.FuncMap{
@@ -56,10 +55,6 @@ listenAddr = {{.ListenAddr | printf "%q"}}
 logsDir = {{.LogsDir | printf "%q" }}
 
 roundDelay = {{.RoundDelay | printf "%q"}}
-
-# mixWait is how long to wait after announcing the mixnet round
-# settings and before closing the round.
-mixWait = {{.MixWait | printf "%q"}}
 `
 
 func initService(service string, confHome string) {
@@ -122,8 +117,7 @@ func writeNewConfig(path string) {
 		ListenAddr: "0.0.0.0:8000",
 		LogsDir:    vzlog.DefaultLogsDir("vuvuzela-coordinator", publicKey),
 
-		RoundDelay: 5 * time.Second,
-		MixWait:    2 * time.Second,
+		RoundDelay: 800 * time.Millisecond,
 	}
 
 	tmpl := template.Must(template.New("config").Funcs(funcMap).Parse(confTemplate))
@@ -178,19 +172,13 @@ func main() {
 
 		ConfigClient: config.StdClient,
 
-		MixWait:   conf.MixWait,
-		RoundWait: conf.RoundDelay,
+		RoundDelay: conf.RoundDelay,
 
 		PersistPath: coordinatorPresistPath,
 	}
 	err = convoServer.LoadPersistedState()
 	if err != nil {
 		log.Fatalf("error loading persisted state: %s", err)
-	}
-
-	err = convoServer.Run()
-	if err != nil {
-		log.Fatalf("error starting convo loop: %s", err)
 	}
 
 	http.Handle("/convo/", http.StripPrefix("/convo", convoServer))
@@ -204,6 +192,10 @@ func main() {
 	log.StdLogger.EntryHandler = logHandler
 	log.Infof("Listening on %q", conf.ListenAddr)
 
+	err = convoServer.Run()
+	if err != nil {
+		log.Fatalf("error starting convo loop: %s", err)
+	}
 	err = http.Serve(listener, nil)
 	if err != nil {
 		log.Fatal(err)
