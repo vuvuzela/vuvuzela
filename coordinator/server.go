@@ -305,6 +305,12 @@ func (srv *Server) loop() {
 }
 
 func (srv *Server) runRound(ctx context.Context, round uint32, deadline time.Time) {
+	defer func() {
+		srv.mu.Lock()
+		delete(srv.rounds, round)
+		srv.mu.Unlock()
+	}()
+
 	logger := log.WithFields(log.Fields{"round": round})
 
 	srv.mu.Lock()
@@ -360,10 +366,6 @@ func (srv *Server) runRound(ctx context.Context, round uint32, deadline time.Tim
 	st.mu.Unlock()
 
 	srv.mixOnions(ctx, mixServers[0], round, onions)
-
-	srv.mu.Lock()
-	delete(srv.rounds, round)
-	srv.mu.Unlock()
 }
 
 func (srv *Server) sleep(d time.Duration) bool {
