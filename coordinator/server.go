@@ -294,6 +294,9 @@ func (srv *Server) loop() {
 			}()
 		}
 
+		if time.Now().After(lastDeadline) {
+			lastDeadline = time.Now()
+		}
 		lastDeadline = lastDeadline.Add(srv.RoundDelay)
 		go func() {
 			srv.runRound(context.Background(), round, lastDeadline)
