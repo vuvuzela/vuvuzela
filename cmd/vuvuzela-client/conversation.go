@@ -66,16 +66,8 @@ type TextMessage struct {
 	Message []byte
 }
 
-// TimestampMessages were previously used for computing end-to-end latency.
-type TimestampMessage struct {
-	Timestamp time.Time
-}
-
 func (cm *ConvoMessage) Marshal() (msg [convo.SizeMessageBody]byte) {
 	switch v := cm.Body.(type) {
-	case *TimestampMessage:
-		msg[0] = 0
-		binary.PutVarint(msg[1:], v.Timestamp.Unix())
 	case *TextMessage:
 		msg[0] = 1
 		copy(msg[1:], v.Message)
@@ -85,11 +77,6 @@ func (cm *ConvoMessage) Marshal() (msg [convo.SizeMessageBody]byte) {
 
 func (cm *ConvoMessage) Unmarshal(msg []byte) error {
 	switch msg[0] {
-	case 0:
-		ts, _ := binary.Varint(msg[1:])
-		cm.Body = &TimestampMessage{
-			Timestamp: time.Unix(ts, 0),
-		}
 	case 1:
 		cm.Body = &TextMessage{msg[1:]}
 	default:
@@ -193,9 +180,8 @@ func (c *Conversation) NextMessage(round uint32) *convo.DeadDropMessage {
 	case m := <-c.outQueue:
 		body = &TextMessage{Message: m}
 	default:
-		body = &TimestampMessage{
-			Timestamp: time.Now(),
-		}
+		// We could do something more interesting here.
+		body = &TextMessage{Message: nil}
 	}
 	msg := &ConvoMessage{
 		Body: body,
@@ -277,11 +263,12 @@ func (c *Conversation) Reply(round uint32, encmsg []byte) {
 
 	switch m := msg.Body.(type) {
 	case *TextMessage:
+		if m.Message == nil {
+			return
+		}
 		s := strings.TrimRight(string(m.Message), "\x00")
 		c.PrintfSync("%s\n", c.formatUserMessage(false, s))
 		seldomNotify("%s says: %s", c.peerUsername, s)
-	case *TimestampMessage:
-		// ignore it
 	}
 }
 
