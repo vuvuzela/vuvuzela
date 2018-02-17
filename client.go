@@ -49,6 +49,7 @@ type ConvoHandler interface {
 	Replies(round uint32, messages [][]byte)
 	NewConfig(chain []*config.SignedConfig)
 	Error(err error)
+	DebugError(err error)
 	GlobalAnnouncement(message string)
 }
 
@@ -117,7 +118,7 @@ func (c *Client) convoRoundError(conn typesocket.Conn, v coordinator.RoundError)
 
 func (c *Client) newConvoRound(conn typesocket.Conn, v coordinator.NewRound) {
 	if time.Until(v.EndTime) < 20*time.Millisecond {
-		c.Handler.Error(errors.New("newConvoRound %d: skipping round (only %s left)", v.Round, time.Until(v.EndTime)))
+		c.Handler.DebugError(errors.New("newConvoRound %d: skipping round (only %s left)", v.Round, time.Until(v.EndTime)))
 		return
 	}
 
@@ -183,7 +184,7 @@ func (c *Client) runRound(conn typesocket.Conn, st *roundState, v coordinator.Ne
 	}
 
 	if time.Until(v.EndTime) < 180*time.Millisecond {
-		c.Handler.Error(errors.New("runRound %d: skipping round (only %s left)", v.Round, time.Until(v.EndTime)))
+		c.Handler.DebugError(errors.New("runRound %d: skipping round (only %s left)", v.Round, time.Until(v.EndTime)))
 		return
 	}
 
@@ -202,7 +203,7 @@ func (c *Client) runRound(conn typesocket.Conn, st *roundState, v coordinator.Ne
 	st.mu.Unlock()
 
 	if time.Until(v.EndTime) < 10*time.Millisecond {
-		c.Handler.Error(errors.New("runRound %d: abandoning round (only %s left)", round, time.Until(v.EndTime)))
+		c.Handler.DebugError(errors.New("runRound %d: abandoning round (only %s left)", round, time.Until(v.EndTime)))
 		return
 	}
 	conn.Send("onion", coordinator.OnionMsg{

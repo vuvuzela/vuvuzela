@@ -22,6 +22,13 @@ func (gc *GuiClient) Error(err error) {
 	log.Error(err)
 }
 
+func (gc *GuiClient) DebugError(err error) {
+	if *debug {
+		log.Error(err)
+		return
+	}
+}
+
 func (gc *GuiClient) ConfirmedFriend(f *alpenhorn.Friend) {
 	gc.WarnfSync("Confirmed friend: %s\n", f.Username)
 }
