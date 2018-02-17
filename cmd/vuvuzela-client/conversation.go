@@ -15,6 +15,7 @@ import (
 	"github.com/jroimartin/gocui"
 	"golang.org/x/crypto/nacl/secretbox"
 
+	"vuvuzela.io/alpenhorn/errors"
 	"vuvuzela.io/alpenhorn/log"
 	"vuvuzela.io/alpenhorn/log/ansi"
 	"vuvuzela.io/vuvuzela/convo"
@@ -27,9 +28,14 @@ type Conversation struct {
 	gc *GuiClient
 
 	sync.RWMutex
-	outQueue    chan []byte
 	rounds      map[uint32]*convoRound
 	pendingCall *keywheelStart
+
+	outQueue []seqMsg
+	lastOut  int
+	inQueue  map[uint32][]byte // seq number -> msg
+	seq      uint32
+	ack      uint32
 
 	sessionKey      *[32]byte
 	sessionKeyRound uint32
@@ -41,10 +47,16 @@ type Conversation struct {
 	focused            bool
 }
 
+type seqMsg struct {
+	Seq uint32
+	Msg []byte
+}
+
 func (c *Conversation) Init() {
-	c.outQueue = make(chan []byte, 64)
+	c.seq = 1 // Start at 1, since 0 is for cover traffic.
 	c.lastPeerResponding = false
 	c.rounds = make(map[uint32]*convoRound)
+	c.inQueue = make(map[uint32][]byte)
 }
 
 type convoRound struct {
@@ -58,8 +70,9 @@ func (c *Conversation) ViewName() string {
 }
 
 type ConvoMessage struct {
-	Body interface{}
-	// seq/ack numbers can go here
+	Seq  uint32
+	Ack  uint32
+	Body []byte
 }
 
 type TextMessage struct {
@@ -67,38 +80,33 @@ type TextMessage struct {
 }
 
 func (cm *ConvoMessage) Marshal() (msg [convo.SizeMessageBody]byte) {
-	switch v := cm.Body.(type) {
-	case *TextMessage:
-		msg[0] = 1
-		copy(msg[1:], v.Message)
-	}
+	binary.BigEndian.PutUint32(msg[0:4], cm.Seq)
+	binary.BigEndian.PutUint32(msg[4:8], cm.Ack)
+	copy(msg[8:], cm.Body)
 	return
 }
 
 func (cm *ConvoMessage) Unmarshal(msg []byte) error {
-	switch msg[0] {
-	case 1:
-		cm.Body = &TextMessage{msg[1:]}
-	default:
-		return fmt.Errorf("unexpected message type: %d", msg[0])
+	if len(msg) != convo.SizeMessageBody {
+		return errors.New("bad message length: want %d bytes, got %d", convo.SizeMessageBody, len(msg))
 	}
+	cm.Seq = binary.BigEndian.Uint32(msg[0:4])
+	cm.Ack = binary.BigEndian.Uint32(msg[4:8])
+	cm.Body = msg[8:]
 	return nil
 }
 
 func (c *Conversation) QueueTextMessage(msg []byte) {
-	var ok bool
-	select {
-	case c.outQueue <- msg:
-		ok = true
-	default:
-		ok = false
-	}
+	c.Lock()
+	c.outQueue = append(c.outQueue, seqMsg{
+		Seq: c.seq,
+		Msg: msg,
+	})
+	c.seq++
+	c.Unlock()
 
-	if ok {
-		c.Printf("%s\n", c.formatUserMessage(true, string(msg)))
-	} else {
-		c.Warnf("Queue full, message not sent to %s: %s\n", c.peerUsername, msg)
-	}
+	// TODO print only SizeMessage bytes, so user knows what got truncated.
+	c.Printf("%s\n", c.formatUserMessage(true, string(msg)))
 }
 
 func (c *Conversation) formatUserMessage(fromMe bool, msg string) string {
@@ -174,17 +182,29 @@ func (c *Conversation) NextMessage(round uint32) *convo.DeadDropMessage {
 	// update the round number in the status bar
 	go c.gc.redraw()
 
-	var body interface{}
-
-	select {
-	case m := <-c.outQueue:
-		body = &TextMessage{Message: m}
-	default:
-		// We could do something more interesting here.
-		body = &TextMessage{Message: nil}
+	c.Lock()
+	var next seqMsg
+	if len(c.outQueue) == 0 {
+		next = seqMsg{
+			Seq: 0,
+			Msg: nil,
+		}
+	} else {
+		if c.lastOut != -1 && c.lastOut+1 < len(c.outQueue) {
+			c.lastOut++
+			next = c.outQueue[c.lastOut]
+		} else {
+			c.lastOut = 0
+			next = c.outQueue[0]
+		}
 	}
+	ack := c.ack
+	c.Unlock()
+
 	msg := &ConvoMessage{
-		Body: body,
+		Seq:  next.Seq,
+		Ack:  ack,
+		Body: next.Msg,
 	}
 	msgdata := msg.Marshal()
 
@@ -257,16 +277,50 @@ func (c *Conversation) Reply(round uint32, encmsg []byte) {
 	}
 
 	responding = true
+
 	c.Lock()
 	c.lastLatency = time.Now().Sub(st.created)
+
+	newOutQueue := c.outQueue[:0]
+	for _, out := range c.outQueue {
+		if out.Seq <= msg.Ack {
+			// We removed something from the queue, reset lastOut.
+			c.lastOut = -1
+			continue
+		}
+		newOutQueue = append(newOutQueue, out)
+	}
+	c.outQueue = newOutQueue
+
+	var displayMsgs [][]byte
+	if msg.Seq > 0 {
+		// This message is not cover traffic.
+		if c.ack == 0 {
+			// This is the first message we've seen from the user.
+			// Use this as the starting sequence number.
+			c.ack = msg.Seq
+			displayMsgs = append(displayMsgs, msg.Body)
+		} else {
+			// Add message to the inQueue, and acknowledge the longest
+			// consecutive chain starting from our current ack value.
+			c.inQueue[msg.Seq] = msg.Body
+			i := c.ack + 1
+			for {
+				in, ok := c.inQueue[i]
+				if !ok {
+					break
+				}
+				displayMsgs = append(displayMsgs, in)
+				delete(c.inQueue, i)
+				c.ack++
+				i++
+			}
+		}
+	}
 	c.Unlock()
 
-	switch m := msg.Body.(type) {
-	case *TextMessage:
-		if m.Message == nil {
-			return
-		}
-		s := strings.TrimRight(string(m.Message), "\x00")
+	for _, body := range displayMsgs {
+		s := strings.TrimRight(string(body), "\x00")
 		c.PrintfSync("%s\n", c.formatUserMessage(false, s))
 		seldomNotify("%s says: %s", c.peerUsername, s)
 	}

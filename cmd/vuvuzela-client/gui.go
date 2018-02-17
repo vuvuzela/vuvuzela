@@ -107,6 +107,7 @@ func (gc *GuiClient) activateConvo(convo *Conversation, wheel *keywheelStart) bo
 		convo.lastPeerResponding = false
 		convo.lastLatency = 0
 		convo.pendingCall = nil
+		convo.lastOut = -1
 		convo.Unlock()
 		return true
 	}
