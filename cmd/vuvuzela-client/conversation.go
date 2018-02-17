@@ -31,12 +31,12 @@ type Conversation struct {
 	rounds      map[uint32]*convoRound
 	pendingCall *keywheelStart
 
-	outQueue []seqMsg
-	lastOut  int
-	inQueue  map[uint32][]byte // seq number -> msg
+	outQueue    []seqMsg
+	lastOut     int
+	inQueue     map[uint32][]byte // seq number -> msg
 	relativeSeq uint32
-	seqBase uint32
-	ack      uint32
+	seqBase     uint32
+	ack         uint32
 
 	sessionKey      *[32]byte
 	sessionKeyRound uint32
@@ -50,7 +50,7 @@ type Conversation struct {
 
 type seqMsg struct {
 	RelativeSeq uint32
-	Msg []byte
+	Msg         []byte
 }
 
 func (c *Conversation) Init() {
@@ -113,7 +113,7 @@ func (c *Conversation) QueueTextMessage(msg []byte) {
 	c.Lock()
 	c.outQueue = append(c.outQueue, seqMsg{
 		RelativeSeq: c.relativeSeq,
-		Msg: msg,
+		Msg:         msg,
 	})
 	c.relativeSeq++
 	c.Unlock()
@@ -301,7 +301,7 @@ func (c *Conversation) Reply(round uint32, encmsg []byte) {
 
 	newOutQueue := c.outQueue[:0]
 	for _, out := range c.outQueue {
-		if c.seqBase > 0 && out.RelativeSeq + c.seqBase <= msg.Ack {
+		if c.seqBase > 0 && out.RelativeSeq+c.seqBase <= msg.Ack {
 			// We removed something from the queue, adjust lastOut.
 			if c.lastOut > 0 {
 				c.lastOut -= 1
