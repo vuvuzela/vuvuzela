@@ -52,8 +52,8 @@ type seqMsg struct {
 	Msg []byte
 }
 
-func (c *Conversation) Init() {
-	c.seq = 1 // Start at 1, since 0 is for cover traffic.
+func (c *Conversation) Init(startSeq uint32) {
+	c.seq = startSeq + 1 // Avoid 0 (reserved for cover traffic)
 	c.lastPeerResponding = false
 	c.rounds = make(map[uint32]*convoRound)
 	c.inQueue = make(map[uint32][]byte)
