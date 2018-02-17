@@ -1168,6 +1168,11 @@ func vuvuzelaEditor(v *gocui.View, key gocui.Key, ch rune, mod gocui.Modifier) {
 		v.MoveCursor(-1, 0, true)
 	case key == gocui.KeyArrowRight:
 		v.MoveCursor(1, 0, true)
+	case key == gocui.KeyHome:
+		v.SetCursor(0, 0)
+	case key == gocui.KeyEnd:
+		line, _ := v.Line(0)
+		v.SetCursor(len(line), 0)
 	}
 	// User typed something; don't send notifications.
 	resetNotifyTimer()
