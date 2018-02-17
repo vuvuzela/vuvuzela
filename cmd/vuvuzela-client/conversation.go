@@ -353,6 +353,7 @@ type Status struct {
 	Round          uint32
 	Latency        float64
 	Unread         bool
+	Unacked        int
 }
 
 func (c *Conversation) Status() *Status {
@@ -362,6 +363,7 @@ func (c *Conversation) Status() *Status {
 		Round:          c.lastRound,
 		Latency:        float64(c.lastLatency) / float64(time.Second),
 		Unread:         c.unread,
+		Unacked:        len(c.outQueue),
 	}
 	c.RUnlock()
 	return status

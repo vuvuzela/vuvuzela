@@ -430,7 +430,12 @@ func (gc *GuiClient) layout(g *gocui.Gui) error {
 		if convoStatus.Round == 0 {
 			round = "-"
 		}
-		roundLatency = fmt.Sprintf("  [round: %s]  [latency: %s]  ", round, latency)
+		var unacked string
+		if convoStatus.Unacked > 0 {
+			unacked = fmt.Sprintf("[%d unacked]", convoStatus.Unacked)
+		}
+		roundLatency = fmt.Sprintf("  [round: %s]  [latency: %s]  %s",
+			round, latency, unacked)
 	}
 
 	// Indicate if the current window is scrolled up in the status bar.
