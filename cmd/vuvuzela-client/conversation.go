@@ -70,9 +70,10 @@ func (c *Conversation) ViewName() string {
 }
 
 type ConvoMessage struct {
-	Seq  uint32
-	Ack  uint32
-	Body []byte
+	Seq    uint32
+	Ack    uint32
+	Lowest bool
+	Body   []byte
 }
 
 type TextMessage struct {
@@ -82,7 +83,12 @@ type TextMessage struct {
 func (cm *ConvoMessage) Marshal() (msg [convo.SizeMessageBody]byte) {
 	binary.BigEndian.PutUint32(msg[0:4], cm.Seq)
 	binary.BigEndian.PutUint32(msg[4:8], cm.Ack)
-	copy(msg[8:], cm.Body)
+	if cm.Lowest {
+		msg[8] = 1
+	} else {
+		msg[8] = 0
+	}
+	copy(msg[9:], cm.Body)
 	return
 }
 
@@ -92,7 +98,12 @@ func (cm *ConvoMessage) Unmarshal(msg []byte) error {
 	}
 	cm.Seq = binary.BigEndian.Uint32(msg[0:4])
 	cm.Ack = binary.BigEndian.Uint32(msg[4:8])
-	cm.Body = msg[8:]
+	if msg[8] == 0 {
+		cm.Lowest = false
+	} else {
+		cm.Lowest = true
+	}
+	cm.Body = msg[9:]
 	return nil
 }
 
@@ -184,6 +195,7 @@ func (c *Conversation) NextMessage(round uint32) *convo.DeadDropMessage {
 
 	c.Lock()
 	var next seqMsg
+	isLowestSeq := false
 	if len(c.outQueue) == 0 {
 		next = seqMsg{
 			Seq: 0,
@@ -196,15 +208,17 @@ func (c *Conversation) NextMessage(round uint32) *convo.DeadDropMessage {
 		} else {
 			c.lastOut = 0
 			next = c.outQueue[0]
+			isLowestSeq = true
 		}
 	}
 	ack := c.ack
 	c.Unlock()
 
 	msg := &ConvoMessage{
-		Seq:  next.Seq,
-		Ack:  ack,
-		Body: next.Msg,
+		Seq:    next.Seq,
+		Ack:    ack,
+		Lowest: isLowestSeq,
+		Body:   next.Msg,
 	}
 	msgdata := msg.Marshal()
 
@@ -299,9 +313,12 @@ func (c *Conversation) Reply(round uint32, encmsg []byte) {
 		// This message is not cover traffic.
 		if c.ack == 0 {
 			// This is the first message we've seen from the user.
-			// Use this as the starting sequence number.
-			c.ack = msg.Seq
-			displayMsgs = append(displayMsgs, msg.Body)
+			// Use this as the starting sequence number, if this is
+			// the lowest-sequence-numbered message they have.
+			if msg.Lowest {
+				c.ack = msg.Seq
+				displayMsgs = append(displayMsgs, msg.Body)
+			}
 		} else {
 			// Add message to the inQueue, and acknowledge the longest
 			// consecutive chain starting from our current ack value.
