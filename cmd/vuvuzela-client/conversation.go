@@ -309,31 +309,30 @@ func (c *Conversation) Reply(round uint32, encmsg []byte) {
 	c.outQueue = newOutQueue
 
 	var displayMsgs [][]byte
-	if msg.Seq > 0 {
-		// This message is not cover traffic.
-		if c.ack == 0 {
-			// This is the first message we've seen from the user.
-			// Use this as the starting sequence number, if this is
-			// the lowest-sequence-numbered message they have.
-			if msg.Lowest {
-				c.ack = msg.Seq
-				displayMsgs = append(displayMsgs, msg.Body)
+	if msg.Seq > c.ack {
+		// This message is not cover traffic (msg.Seq != 0) and we have
+		// not processed it yet (msg.Seq > c.ack).  Queue the message.
+		c.inQueue[msg.Seq] = msg.Body
+
+		// If this is the lowest-numbered message the peer knows about,
+		// then don't bother waiting for any lower-numbered messages.
+		if msg.Lowest {
+			c.ack = msg.Seq - 1
+		}
+
+		// Acknowledge the longest consecutive chain starting from our
+		// current ack value.
+		i := c.ack + 1
+
+		for {
+			in, ok := c.inQueue[i]
+			if !ok {
+				break
 			}
-		} else {
-			// Add message to the inQueue, and acknowledge the longest
-			// consecutive chain starting from our current ack value.
-			c.inQueue[msg.Seq] = msg.Body
-			i := c.ack + 1
-			for {
-				in, ok := c.inQueue[i]
-				if !ok {
-					break
-				}
-				displayMsgs = append(displayMsgs, in)
-				delete(c.inQueue, i)
-				c.ack++
-				i++
-			}
+			displayMsgs = append(displayMsgs, in)
+			delete(c.inQueue, i)
+			c.ack = i
+			i++
 		}
 	}
 	c.Unlock()
