@@ -44,6 +44,8 @@ type GuiClient struct {
 
 	// updated atomically
 	lastSeenConvoRound uint32
+	lastSeenConvoOnce  sync.Once
+	lastSeenConvoReady chan struct{}
 
 	connectOnce sync.Once
 }
@@ -54,6 +56,7 @@ type pendingRound struct {
 
 func (gc *GuiClient) Outgoing(round uint32) []*convo.DeadDropMessage {
 	atomic.StoreUint32(&gc.lastSeenConvoRound, round)
+	gc.lastSeenConvoOnce.Do(func() { close(gc.lastSeenConvoReady) })
 
 	out := make([]*convo.DeadDropMessage, 0, NumOutgoing)
 
@@ -1021,9 +1024,17 @@ func (gc *GuiClient) Connect() {
 
 func (gc *GuiClient) EnsureConnected() {
 	gc.connectOnce.Do(func() {
+		gc.lastSeenConvoReady = make(chan struct{})
+
 		go gc.connectLoop("AddFriend", gc.alpenhornClient.ConnectAddFriend)
-		go gc.connectLoop("Dialing", gc.alpenhornClient.ConnectDialing)
 		go gc.connectLoop("Convo", gc.convoClient.ConnectConvo)
+		go func() {
+			// The dialing protocol needs a rough estimate of the current
+			// convo round number, so wait until we hear back from the
+			// convo protocol before starting dialing.
+			<-gc.lastSeenConvoReady
+			gc.connectLoop("Dialing", gc.alpenhornClient.ConnectDialing)
+		}()
 	})
 }
 
