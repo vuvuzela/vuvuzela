@@ -284,8 +284,10 @@ func (c *Conversation) Reply(round uint32, encmsg []byte) {
 	newOutQueue := c.outQueue[:0]
 	for _, out := range c.outQueue {
 		if out.Seq <= msg.Ack {
-			// We removed something from the queue, reset lastOut.
-			c.lastOut = -1
+			// We removed something from the queue, adjust lastOut.
+			if c.lastOut > 0 {
+				c.lastOut -= 1
+			}
 			continue
 		}
 		newOutQueue = append(newOutQueue, out)
