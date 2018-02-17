@@ -34,7 +34,8 @@ type Conversation struct {
 	outQueue []seqMsg
 	lastOut  int
 	inQueue  map[uint32][]byte // seq number -> msg
-	seq      uint32
+	relativeSeq uint32
+	seqBase uint32
 	ack      uint32
 
 	sessionKey      *[32]byte
@@ -48,12 +49,13 @@ type Conversation struct {
 }
 
 type seqMsg struct {
-	Seq uint32
+	RelativeSeq uint32
 	Msg []byte
 }
 
-func (c *Conversation) Init(startSeq uint32) {
-	c.seq = startSeq + 1 // Avoid 0 (reserved for cover traffic)
+func (c *Conversation) Init() {
+	c.relativeSeq = 0
+	c.seqBase = 0
 	c.lastPeerResponding = false
 	c.rounds = make(map[uint32]*convoRound)
 	c.inQueue = make(map[uint32][]byte)
@@ -110,10 +112,10 @@ func (cm *ConvoMessage) Unmarshal(msg []byte) error {
 func (c *Conversation) QueueTextMessage(msg []byte) {
 	c.Lock()
 	c.outQueue = append(c.outQueue, seqMsg{
-		Seq: c.seq,
+		RelativeSeq: c.relativeSeq,
 		Msg: msg,
 	})
-	c.seq++
+	c.relativeSeq++
 	c.Unlock()
 
 	// TODO print only SizeMessage bytes, so user knows what got truncated.
@@ -194,32 +196,34 @@ func (c *Conversation) NextMessage(round uint32) *convo.DeadDropMessage {
 	go c.gc.redraw()
 
 	c.Lock()
-	var next seqMsg
-	isLowestSeq := false
-	if len(c.outQueue) == 0 {
-		next = seqMsg{
-			Seq: 0,
-			Msg: nil,
+
+	// Cover traffic message by default
+	msg := &ConvoMessage{
+		Seq:    0,
+		Ack:    c.ack,
+		Lowest: false,
+		Body:   nil,
+	}
+
+	if len(c.outQueue) > 0 {
+		if c.seqBase == 0 {
+			// Use the conversation round as an initial seq#
+			// to avoid seq# duplicates across client restart
+			c.seqBase = round + 1
 		}
-	} else {
+
 		if c.lastOut != -1 && c.lastOut+1 < len(c.outQueue) {
 			c.lastOut++
-			next = c.outQueue[c.lastOut]
 		} else {
 			c.lastOut = 0
-			next = c.outQueue[0]
-			isLowestSeq = true
+			msg.Lowest = true
 		}
+
+		msg.Seq = c.outQueue[c.lastOut].RelativeSeq + c.seqBase
+		msg.Body = c.outQueue[c.lastOut].Msg
 	}
-	ack := c.ack
 	c.Unlock()
 
-	msg := &ConvoMessage{
-		Seq:    next.Seq,
-		Ack:    ack,
-		Lowest: isLowestSeq,
-		Body:   next.Msg,
-	}
 	msgdata := msg.Marshal()
 
 	roundKey := c.rollAndReplaceKey(round)
@@ -297,7 +301,7 @@ func (c *Conversation) Reply(round uint32, encmsg []byte) {
 
 	newOutQueue := c.outQueue[:0]
 	for _, out := range c.outQueue {
-		if out.Seq <= msg.Ack {
+		if c.seqBase > 0 && out.RelativeSeq + c.seqBase <= msg.Ack {
 			// We removed something from the queue, adjust lastOut.
 			if c.lastOut > 0 {
 				c.lastOut -= 1

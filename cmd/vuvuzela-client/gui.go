@@ -143,7 +143,7 @@ func (gc *GuiClient) getOrCreateConvo(username string) *Conversation {
 		myUsername:   gc.myName,
 		gc:           gc,
 	}
-	convo.Init(gc.latestConvoRound())
+	convo.Init()
 
 	gc.conversations = append(gc.conversations, convo)
 	maxX, maxY := gc.gui.Size()
