@@ -114,7 +114,8 @@ func (c *Client) globalAnnouncement(conn typesocket.Conn, v coordinator.GlobalAn
 }
 
 func (c *Client) convoRoundError(conn typesocket.Conn, v coordinator.RoundError) {
-	if strings.Contains(v.Err, "round is closed:") {
+	if strings.Contains(v.Err, "round is closed:") || strings.Contains(v.Err, "round not found") {
+		// The client now supports retransmission so it's safe to ignore these errors by default.
 		c.Handler.DebugError(errors.New("error from convo coordinator: round %d: %s", v.Round, v.Err))
 	} else {
 		c.Handler.Error(errors.New("error from convo coordinator: round %d: %s", v.Round, v.Err))
