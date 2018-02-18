@@ -625,24 +625,31 @@ type Client struct {
 	Key ed25519.PrivateKey
 
 	mu    sync.Mutex
-	conns map[[ed25519.PublicKeySize]byte]*grpc.ClientConn
+	conns map[[ed25519.PublicKeySize]byte][]*grpc.ClientConn
 }
 
 func (c *Client) getConn(server PublicServerConfig) (pb.MixnetClient, error) {
+	conns, err := c.getConns(1, server)
+	if err != nil {
+		return nil, err
+	}
+	return conns[0], nil
+}
+
+func (c *Client) getConns(count int, server PublicServerConfig) ([]pb.MixnetClient, error) {
 	var k [ed25519.PublicKeySize]byte
 	copy(k[:], server.Key)
 
 	c.mu.Lock()
 	if c.conns == nil {
-		c.conns = make(map[[ed25519.PublicKeySize]byte]*grpc.ClientConn)
+		c.conns = make(map[[ed25519.PublicKeySize]byte][]*grpc.ClientConn)
 	}
-	cc := c.conns[k]
+	ccs := c.conns[k]
 	c.mu.Unlock()
 
-	if cc == nil {
+	if len(ccs) < count {
 		creds := credentials.NewTLS(edtls.NewTLSClientConfig(c.Key, server.Key))
 
-		var err error
 		opts := []grpc.DialOption{
 			grpc.WithTransportCredentials(creds),
 			grpc.WithWriteBufferSize(128 * 1024),
@@ -650,17 +657,26 @@ func (c *Client) getConn(server PublicServerConfig) (pb.MixnetClient, error) {
 			grpc.WithInitialWindowSize(2 << 18),
 			grpc.WithInitialConnWindowSize(2 << 18),
 		}
-		cc, err = grpc.Dial(server.Address, opts...)
-		if err != nil {
-			return nil, err
-		}
 
-		c.mu.Lock()
-		c.conns[k] = cc
-		c.mu.Unlock()
+		newConns := count - len(ccs)
+		for i := 0; i < newConns; i++ {
+			cc, err := grpc.Dial(server.Address, opts...)
+			if err != nil {
+				return nil, err
+			}
+			c.mu.Lock()
+			ccs = append(ccs, cc)
+			c.conns[k] = ccs
+			c.mu.Unlock()
+		}
 	}
 
-	return pb.NewMixnetClient(cc), nil
+	clients := make([]pb.MixnetClient, count)
+	for i := range clients {
+		clients[i] = pb.NewMixnetClient(ccs[i])
+	}
+
+	return clients, nil
 }
 
 // NewRound starts a new mixing round on the given servers.
@@ -760,9 +776,14 @@ func (c *Client) RunRound(ctx context.Context, server PublicServerConfig, servic
 		numSpans = 1
 	}
 	spans := concurrency.Spans(len(onions), numSpans)
+	conns, err := c.getConns(len(spans), server)
+	if err != nil {
+		return nil, err
+	}
 	errs := make(chan error, 1)
 	start := time.Now()
-	for _, span := range spans {
+	for i, span := range spans {
+		conn := conns[i]
 		go func(span concurrency.Span) {
 			errs <- streamAddOnions(addCtx, conn, span.Start, onions[span.Start:span.Start+span.Count])
 		}(span)
@@ -799,7 +820,11 @@ func (c *Client) RunRound(ctx context.Context, server PublicServerConfig, servic
 	start = time.Now()
 	replies := make([][]byte, len(onions))
 	spans = concurrency.Spans(len(replies), numSpans)
-	getOnions := func(span concurrency.Span) error {
+	conns, err = c.getConns(len(spans), server)
+	if err != nil {
+		return nil, err
+	}
+	getOnions := func(span concurrency.Span, conn pb.MixnetClient) error {
 		stream, err := conn.GetOnions(ctx, &pb.GetOnionsRequest{
 			Service: service,
 			Round:   round,
@@ -821,9 +846,10 @@ func (c *Client) RunRound(ctx context.Context, server PublicServerConfig, servic
 		}
 		return nil
 	}
-	for _, span := range spans {
+	for i, span := range spans {
+		conn := conns[i]
 		go func(span concurrency.Span) {
-			errs <- getOnions(span)
+			errs <- getOnions(span, conn)
 		}(span)
 	}
 	var getErr error
