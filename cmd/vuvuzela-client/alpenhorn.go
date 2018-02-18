@@ -53,8 +53,12 @@ func (gc *GuiClient) UnexpectedSigningKey(in *alpenhorn.IncomingFriendRequest, o
 
 func (gc *GuiClient) SendingCall(call *alpenhorn.OutgoingCall) {
 	convo := gc.getOrCreateConvo(call.Username)
+	round, err := gc.convoClient.LatestRound()
+	if err != nil {
+		convo.WarnfSync("Error calling %s: failed to fetch latest convo round: %s\n", err)
+		return
+	}
 	convo.WarnfSync("Calling %s ...\n", call.Username)
-	round := gc.latestConvoRound()
 	epochStart, intent := stdRoundSyncer.outgoingCallConvoRound(round)
 
 	call.UpdateIntent(intent)
@@ -76,7 +80,11 @@ func (gc *GuiClient) ReceivedCall(call *alpenhorn.IncomingCall) {
 	convo.WarnfSync("Received call: %s\n", call.Username)
 	notify("Call from %s", call.Username)
 
-	round := gc.latestConvoRound()
+	round, err := gc.convoClient.LatestRound()
+	if err != nil {
+		convo.WarnfSync("Error activating convo: failed to fetch latest convo round: %s\n", err)
+		return
+	}
 	wheel := &keywheelStart{
 		sessionKey: call.SessionKey,
 		convoRound: stdRoundSyncer.incomingCallConvoRound(round, call.Intent),

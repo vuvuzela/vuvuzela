@@ -29,9 +29,10 @@ type Client struct {
 	ConfigClient *config.Client
 	Handler      ConvoHandler
 
-	mu     sync.Mutex
-	rounds map[uint32]*roundState
-	conn   typesocket.Conn
+	mu          sync.Mutex
+	rounds      map[uint32]*roundState
+	conn        typesocket.Conn
+	latestRound uint32
 
 	convoConfig     *config.SignedConfig
 	convoConfigHash string
@@ -85,6 +86,9 @@ func (c *Client) ConnectConvo() (chan error, error) {
 	disconnect := make(chan error, 1)
 	go func() {
 		disconnect <- conn.Serve(c.convoMux())
+		c.mu.Lock()
+		c.conn = nil
+		c.mu.Unlock()
 	}()
 
 	return disconnect, nil
@@ -95,9 +99,29 @@ func (c *Client) CloseConvo() error {
 	defer c.mu.Unlock()
 
 	if c.conn != nil {
+		c.mu.Lock()
+		c.conn = nil
+		c.mu.Unlock()
 		return c.conn.Close()
 	}
 	return nil
+}
+
+func (c *Client) LatestRound() (uint32, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.conn == nil {
+		return 0, errors.New("not connected to convo service")
+	}
+	return c.latestRound, nil
+}
+
+func (c *Client) setLatestRound(round uint32) {
+	c.mu.Lock()
+	if round > c.latestRound {
+		c.latestRound = round
+	}
+	c.mu.Unlock()
 }
 
 func (c *Client) convoMux() typesocket.Mux {
@@ -123,6 +147,8 @@ func (c *Client) convoRoundError(conn typesocket.Conn, v coordinator.RoundError)
 }
 
 func (c *Client) newConvoRound(conn typesocket.Conn, v coordinator.NewRound) {
+	c.setLatestRound(v.Round)
+
 	if time.Until(v.EndTime) < 20*time.Millisecond {
 		c.Handler.DebugError(errors.New("newConvoRound %d: skipping round (only %s left)", v.Round, time.Until(v.EndTime)))
 		return

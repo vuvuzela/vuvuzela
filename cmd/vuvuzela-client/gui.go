@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/davidlazar/go-crypto/encoding/base32"
@@ -40,11 +39,6 @@ type GuiClient struct {
 	pendingRounds map[uint32]pendingRound
 	mainUnread    bool
 
-	// updated atomically
-	lastSeenConvoRound uint32
-	lastSeenConvoOnce  sync.Once
-	lastSeenConvoReady chan struct{}
-
 	connectOnce sync.Once
 }
 
@@ -53,9 +47,6 @@ type pendingRound struct {
 }
 
 func (gc *GuiClient) Outgoing(round uint32) []*convo.DeadDropMessage {
-	atomic.StoreUint32(&gc.lastSeenConvoRound, round)
-	gc.lastSeenConvoOnce.Do(func() { close(gc.lastSeenConvoReady) })
-
 	out := make([]*convo.DeadDropMessage, 0, NumOutgoing)
 
 	gc.mu.Lock()
@@ -79,10 +70,6 @@ func (gc *GuiClient) Outgoing(round uint32) []*convo.DeadDropMessage {
 	}
 
 	return out
-}
-
-func (gc *GuiClient) latestConvoRound() uint32 {
-	return atomic.LoadUint32(&gc.lastSeenConvoRound)
 }
 
 func (gc *GuiClient) Replies(round uint32, replies [][]byte) {
