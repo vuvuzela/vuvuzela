@@ -99,10 +99,9 @@ func (c *Client) CloseConvo() error {
 	defer c.mu.Unlock()
 
 	if c.conn != nil {
-		c.mu.Lock()
+		conn := c.conn
 		c.conn = nil
-		c.mu.Unlock()
-		return c.conn.Close()
+		return conn.Close()
 	}
 	return nil
 }
