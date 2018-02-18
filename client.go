@@ -6,6 +6,7 @@ package vuvuzela
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -113,7 +114,11 @@ func (c *Client) globalAnnouncement(conn typesocket.Conn, v coordinator.GlobalAn
 }
 
 func (c *Client) convoRoundError(conn typesocket.Conn, v coordinator.RoundError) {
-	c.Handler.Error(errors.New("error from convo coordinator: round %d: %s", v.Round, v.Err))
+	if strings.Contains(v.Err, "round is closed:") {
+		c.Handler.DebugError(errors.New("error from convo coordinator: round %d: %s", v.Round, v.Err))
+	} else {
+		c.Handler.Error(errors.New("error from convo coordinator: round %d: %s", v.Round, v.Err))
+	}
 }
 
 func (c *Client) newConvoRound(conn typesocket.Conn, v coordinator.NewRound) {
