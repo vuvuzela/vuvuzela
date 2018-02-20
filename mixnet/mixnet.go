@@ -706,14 +706,29 @@ func (c *Client) NewRound(ctx context.Context, servers []PublicServerConfig, set
 		conns[i] = conn
 	}
 
+	errs := make(chan error, 1)
 	for i, server := range servers {
-		response, err := conns[i].NewRound(ctx, newRoundReq)
-		if err != nil {
-			return nil, errors.Wrap(err, "server %s: NewRound", server.Address)
+		go func(i int, server PublicServerConfig) {
+			response, err := conns[i].NewRound(ctx, newRoundReq)
+			if err != nil {
+				errs <- errors.Wrap(err, "server %s: NewRound", server.Address)
+				return
+			}
+			key := new([32]byte)
+			copy(key[:], response.OnionKey[:])
+			settings.OnionKeys[i] = key
+			errs <- nil
+		}(i, server)
+	}
+	var newRoundErr error
+	for i := 0; i < len(servers); i++ {
+		err := <-errs
+		if err != nil && newRoundErr == nil {
+			newRoundErr = err
 		}
-		key := new([32]byte)
-		copy(key[:], response.OnionKey[:])
-		settings.OnionKeys[i] = key
+	}
+	if newRoundErr != nil {
+		return nil, newRoundErr
 	}
 
 	setSettingsReq := &pb.SetRoundSettingsRequest{
@@ -721,11 +736,25 @@ func (c *Client) NewRound(ctx context.Context, servers []PublicServerConfig, set
 	}
 	signatures := make([][]byte, len(servers))
 	for i, server := range servers {
-		response, err := conns[i].SetRoundSettings(ctx, setSettingsReq)
-		if err != nil {
-			return signatures, errors.Wrap(err, "server %s: SetRoundSettings", server.Address)
+		go func(i int, server PublicServerConfig) {
+			response, err := conns[i].SetRoundSettings(ctx, setSettingsReq)
+			if err != nil {
+				errs <- errors.Wrap(err, "server %s: SetRoundSettings", server.Address)
+				return
+			}
+			signatures[i] = response.Signature
+			errs <- nil
+		}(i, server)
+	}
+	var setSettingsErr error
+	for i := 0; i < len(servers); i++ {
+		err := <-errs
+		if err != nil && setSettingsErr == nil {
+			setSettingsErr = err
 		}
-		signatures[i] = response.Signature
+	}
+	if setSettingsErr != nil {
+		return nil, setSettingsErr
 	}
 	return signatures, nil
 }
