@@ -55,6 +55,7 @@ type Conversation struct {
 type seqMsg struct {
 	RelativeSeq uint32
 	Msg         []byte
+	LineNumber  int
 }
 
 func (c *Conversation) Init() {
@@ -114,16 +115,27 @@ func (cm *ConvoMessage) Unmarshal(msg []byte) error {
 }
 
 func (c *Conversation) QueueTextMessage(msg []byte) {
+	// TODO print only SizeMessage bytes, so user knows what got truncated.
+	lineNumber := c.WriteLine(c.formatUserMessage(true, string(msg)))
+
 	c.Lock()
 	c.outQueue = append(c.outQueue, seqMsg{
 		RelativeSeq: c.relativeSeq,
 		Msg:         msg,
+		LineNumber:  lineNumber,
 	})
 	c.relativeSeq++
 	c.Unlock()
+}
 
-	// TODO print only SizeMessage bytes, so user knows what got truncated.
-	c.Printf("%s\n", c.formatUserMessage(true, string(msg)))
+func (c *Conversation) WriteLine(line string) int {
+	v, err := c.gc.gui.View(c.ViewName())
+	if err != nil {
+		return -1
+	}
+
+	c.Printf("%s\n", line)
+	return strings.Count(v.Buffer(), "\n") - 2
 }
 
 func (c *Conversation) formatUserMessage(fromMe bool, msg string) string {
@@ -139,7 +151,13 @@ func (c *Conversation) formatUserMessage(fromMe bool, msg string) string {
 		username = c.myUsername
 		usernameColor = []ansi.Code{ansi.Bold}
 	}
-	pad := strings.Repeat(" ", max-len(username))
+	pad := strings.Repeat(" ", max-len(username)-1)
+	if fromMe {
+		// Add a star that will be deleted when the message is acked.
+		pad = "*" + pad
+	} else {
+		pad = " " + pad
+	}
 
 	return fmt.Sprintf("%s%s %s %s", pad, ansi.Colorf(username, usernameColor...), ansi.Colorf("|", ansi.Foreground(27)), msg)
 }
@@ -256,6 +274,27 @@ func (c *Conversation) NextMessage(round uint32) *convo.DeadDropMessage {
 	}
 }
 
+func (c *Conversation) markAcked(line int) {
+	c.gc.gui.Update(func(_ *gocui.Gui) error {
+		v, err := c.gc.gui.View(c.ViewName())
+		if err != nil {
+			return err
+		}
+		// Column 9 contains the '*' right after the timestamp.
+		err = v.SetCursor(9, line)
+		if err != nil {
+			return err
+		}
+		// Delete the '*'
+		v.EditWrite(' ')
+		err = v.SetCursor(0, 0)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
 func (c *Conversation) Reply(round uint32, encmsg []byte) {
 	rlog := log.WithFields(log.Fields{"round": round})
 
@@ -310,6 +349,7 @@ func (c *Conversation) Reply(round uint32, encmsg []byte) {
 			if c.lastOut > 0 {
 				c.lastOut -= 1
 			}
+			c.markAcked(out.LineNumber)
 			continue
 		}
 		newOutQueue = append(newOutQueue, out)
