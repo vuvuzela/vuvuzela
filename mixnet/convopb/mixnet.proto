@@ -10,7 +10,6 @@ service Mixnet {
 	rpc NewRound(NewRoundRequest) returns (NewRoundResponse) {}
 	rpc SetRoundSettings(SetRoundSettingsRequest) returns (RoundSettingsSignature) {}
 
-	rpc SetNumIncoming(SetNumIncomingRequest) returns (Nothing) {}
 	rpc AddOnions(stream AddOnionsRequest) returns (Nothing) {}
 	rpc CloseRound(CloseRoundRequest) returns (Nothing) {}
 
@@ -47,12 +46,6 @@ message SetRoundSettingsRequest {
 
 message RoundSettingsSignature {
 	bytes signature = 1;
-}
-
-message SetNumIncomingRequest {
-	string service = 1;
-	uint32 round = 2;
-	uint32 numIncoming = 3;
 }
 
 message AddOnionsRequest {

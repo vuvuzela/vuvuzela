@@ -313,34 +313,6 @@ func (srv *Server) SetRoundSettings(ctx context.Context, req *pb.SetRoundSetting
 	}, nil
 }
 
-func (srv *Server) SetNumIncoming(ctx context.Context, req *pb.SetNumIncomingRequest) (*pb.Nothing, error) {
-	st, err := srv.getRound(req.Service, req.Round)
-	if err != nil {
-		return nil, err
-	}
-	if err := srv.authPrev(ctx, st); err != nil {
-		return nil, err
-	}
-
-	st.mu.Lock()
-	defer st.mu.Unlock()
-
-	if st.numIncoming == 0 {
-		st.acceptingOnions = true
-		st.numIncoming = req.NumIncoming
-		st.incoming = make([][]byte, req.NumIncoming)
-		// Allocate all the shared keys upfront.
-		st.sharedKeys = make([][32]byte, req.NumIncoming)
-		return &pb.Nothing{}, nil
-	}
-	if st.numIncoming == req.NumIncoming {
-		// already set correctly
-		return &pb.Nothing{}, nil
-	}
-
-	return nil, fmt.Errorf("round %d: numIncoming already set to %d", req.Round, req.NumIncoming)
-}
-
 type decryptionJob struct {
 	st    *roundState
 	round uint32
@@ -376,8 +348,9 @@ func decryptionWorker(in chan decryptionJob) {
 }
 
 type streamMetadata struct {
-	service string
-	round   uint32
+	service     string
+	round       uint32
+	numIncoming uint32
 }
 
 func parseMetadata(ctx context.Context) (*streamMetadata, error) {
@@ -394,15 +367,24 @@ func parseMetadata(ctx context.Context) (*streamMetadata, error) {
 	if md["round"] == nil {
 		return nil, errors.New("missing round in metadata")
 	}
-
 	r, err := strconv.ParseUint(md["round"][0], 10, 32)
 	if err != nil {
 		return nil, errors.New("invalid round: %q", md["round"][0])
 	}
 
+	// Note: gRPC forces keys to be lowercase.
+	if md["numincoming"] == nil {
+		return nil, errors.New("missing numincoming in metadata")
+	}
+	ni, err := strconv.ParseUint(md["numincoming"][0], 10, 32)
+	if err != nil {
+		return nil, errors.New("invalid numincoming: %q", md["numincoming"][0])
+	}
+
 	return &streamMetadata{
-		service: service,
-		round:   uint32(r),
+		service:     service,
+		round:       uint32(r),
+		numIncoming: uint32(ni),
 	}, nil
 }
 
@@ -422,11 +404,17 @@ func (srv *Server) AddOnions(stream pb.Mixnet_AddOnionsServer) error {
 	}
 
 	st.mu.Lock()
-	numIncoming := st.numIncoming
-	if numIncoming == 0 {
+	if st.numIncoming == 0 {
+		st.acceptingOnions = true
+		st.numIncoming = md.numIncoming
+		st.incoming = make([][]byte, st.numIncoming)
+		// Allocate all the shared keys upfront.
+		st.sharedKeys = make([][32]byte, st.numIncoming)
+	} else if st.numIncoming != md.numIncoming {
 		st.mu.Unlock()
-		return errors.New("did not set numIncoming")
+		return errors.New("round %d: multiple values for numIncoming: got %d, want %d", round, md.numIncoming, st.numIncoming)
 	}
+	numIncoming := st.numIncoming
 	st.mu.Unlock()
 
 	for {
@@ -787,23 +775,10 @@ func streamAddOnions(ctx context.Context, conn pb.MixnetClient, offset int, onio
 }
 
 func (c *Client) RunRound(ctx context.Context, server PublicServerConfig, service string, round uint32, onions [][]byte) ([][]byte, error) {
-	conn, err := c.getConn(server)
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = conn.SetNumIncoming(ctx, &pb.SetNumIncomingRequest{
-		Service:     service,
-		Round:       round,
-		NumIncoming: uint32(len(onions)),
-	})
-	if err != nil {
-		return nil, err
-	}
-
 	md := metadata.Pairs(
 		"service", service,
 		"round", fmt.Sprintf("%d", round),
+		"numincoming", fmt.Sprintf("%d", len(onions)),
 	)
 	addCtx := metadata.NewOutgoingContext(ctx, md)
 
@@ -846,7 +821,7 @@ func (c *Client) RunRound(ctx context.Context, server PublicServerConfig, servic
 		Service: service,
 		Round:   round,
 	}
-	_, closeErr := conn.CloseRound(ctx, closeReq)
+	_, closeErr := conns[0].CloseRound(ctx, closeReq)
 	if closeErr != nil {
 		return nil, closeErr
 	}
@@ -903,7 +878,7 @@ func (c *Client) RunRound(ctx context.Context, server PublicServerConfig, servic
 
 	// Delete the round asynchronously.
 	go func() {
-		_, err := conn.DeleteRound(context.Background(), &pb.DeleteRoundRequest{
+		_, err := conns[0].DeleteRound(context.Background(), &pb.DeleteRoundRequest{
 			Service: service,
 			Round:   round,
 		})
