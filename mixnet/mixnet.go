@@ -375,41 +375,45 @@ func decryptionWorker(in chan decryptionJob) {
 	}
 }
 
-func parseMetadata(ctx context.Context) (service string, round uint32, err error) {
+type streamMetadata struct {
+	service string
+	round   uint32
+}
+
+func parseMetadata(ctx context.Context) (*streamMetadata, error) {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		err = errors.New("no metadata provided")
-		return
+		return nil, errors.New("no metadata provided")
 	}
 
 	if md["service"] == nil {
-		err = errors.New("missing service in metadata")
-		return
+		return nil, errors.New("missing service in metadata")
 	}
-	service = md["service"][0]
+	service := md["service"][0]
 
 	if md["round"] == nil {
-		err = errors.New("missing round in metadata")
-		return
+		return nil, errors.New("missing round in metadata")
 	}
 
 	r, err := strconv.ParseUint(md["round"][0], 10, 32)
 	if err != nil {
-		err = errors.New("invalid round: %q", md["round"][0])
-		return
+		return nil, errors.New("invalid round: %q", md["round"][0])
 	}
-	round = uint32(r)
 
-	return
+	return &streamMetadata{
+		service: service,
+		round:   uint32(r),
+	}, nil
 }
 
 func (srv *Server) AddOnions(stream pb.Mixnet_AddOnionsServer) error {
-	service, round, err := parseMetadata(stream.Context())
+	md, err := parseMetadata(stream.Context())
 	if err != nil {
 		return err
 	}
+	round := md.round
 
-	st, err := srv.getRound(service, round)
+	st, err := srv.getRound(md.service, round)
 	if err != nil {
 		return err
 	}
