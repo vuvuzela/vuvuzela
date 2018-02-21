@@ -775,8 +775,11 @@ func streamAddOnions(ctx context.Context, conn pb.MixnetClient, offset int, onio
 			return err
 		}
 	}
-	stream.CloseAndRecv()
-	return nil
+	_, err = stream.CloseAndRecv()
+	if err == io.EOF {
+		return nil
+	}
+	return err
 }
 
 func (c *Client) RunRound(ctx context.Context, server PublicServerConfig, service string, round uint32, onions [][]byte) ([][]byte, error) {
