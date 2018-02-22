@@ -136,6 +136,7 @@ func TestAuth(t *testing.T) {
 
 var chainLen = flag.Int("chainlen", 6, "chain length in TestLongerMixnet")
 var numMsgs = flag.Int("numMsgs", 1000, "number of messages in TestLongerMixnet")
+var createProfile = flag.Bool("profile", false, "create mixnet RunRound profile")
 
 func TestMain(t *testing.T) {
 	flag.Parse()
@@ -150,9 +151,14 @@ func TestMixnetPerformance(t *testing.T) {
 		Key: coordinatorPrivate,
 	}
 
-	f, err := os.OpenFile("mixnet.pprof", os.O_CREATE|os.O_WRONLY, 0600)
-	if err != nil {
-		log.Fatal(err)
+	var f *os.File
+	if *createProfile {
+		var err error
+		f, err = os.OpenFile("mixnet.pprof", os.O_CREATE|os.O_WRONLY, 0600)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer f.Close()
 	}
 
 	for round := uint32(1); round <= 2; round++ {
@@ -187,7 +193,7 @@ func TestMixnetPerformance(t *testing.T) {
 		})
 
 		log.Warnf("Running round")
-		if round == 2 {
+		if round == 2 && *createProfile {
 			if err := pprof.StartCPUProfile(f); err != nil {
 				log.Fatal(err)
 			}
@@ -198,7 +204,7 @@ func TestMixnetPerformance(t *testing.T) {
 			log.Fatalf("mixnet.RunRound: %s", err)
 		}
 		duration := time.Now().Sub(start)
-		if round == 2 {
+		if round == 2 && *createProfile {
 			pprof.StopCPUProfile()
 		}
 		log.Warnf("RunRound took %s -- chainLen=%d  numMsgs=%d", duration, *chainLen, *numMsgs)
