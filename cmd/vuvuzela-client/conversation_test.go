@@ -7,8 +7,8 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
+	"reflect"
 	"testing"
-	"time"
 
 	"github.com/davidlazar/go-crypto/encoding/base32"
 )
@@ -39,9 +39,13 @@ func TestSoloConversation(t *testing.T) {
 }
 
 func TestMarshalConvoMessage(t *testing.T) {
-	now := time.Now()
-	tsm := &TimestampMessage{Timestamp: now}
-	cm := &ConvoMessage{Body: tsm}
+	cm := &ConvoMessage{
+		Seq:      55555,
+		Ack:      22222,
+		Lowest:   true,
+		UserText: make([]byte, SizeUserText),
+	}
+	copy(cm.UserText, []byte("hello world"))
 	data := cm.Marshal()
 
 	xcm := new(ConvoMessage)
@@ -49,9 +53,8 @@ func TestMarshalConvoMessage(t *testing.T) {
 		t.Fatalf("Unmarshal error: %s", err)
 	}
 
-	xtsm := xcm.Body.(*TimestampMessage)
-	if xtsm.Timestamp.Unix() != now.Unix() {
-		t.Fatalf("timestamps don't match")
+	if !reflect.DeepEqual(cm, xcm) {
+		t.Fatalf("%#v != %#v", cm, xcm)
 	}
 }
 

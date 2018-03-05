@@ -76,15 +76,13 @@ func (c *Conversation) ViewName() string {
 }
 
 type ConvoMessage struct {
-	Seq    uint32
-	Ack    uint32
-	Lowest bool
-	Body   []byte
+	Seq      uint32
+	Ack      uint32
+	Lowest   bool
+	UserText []byte // Must be SizeUserText bytes.
 }
 
-type TextMessage struct {
-	Message []byte
-}
+const SizeUserText = convo.SizeMessageBody - 4 - 4 - 1
 
 func (cm *ConvoMessage) Marshal() (msg [convo.SizeMessageBody]byte) {
 	binary.BigEndian.PutUint32(msg[0:4], cm.Seq)
@@ -94,7 +92,7 @@ func (cm *ConvoMessage) Marshal() (msg [convo.SizeMessageBody]byte) {
 	} else {
 		msg[8] = 0
 	}
-	copy(msg[9:], cm.Body)
+	copy(msg[9:], cm.UserText)
 	return
 }
 
@@ -109,7 +107,7 @@ func (cm *ConvoMessage) Unmarshal(msg []byte) error {
 	} else {
 		cm.Lowest = true
 	}
-	cm.Body = msg[9:]
+	cm.UserText = msg[9:]
 	return nil
 }
 
@@ -203,10 +201,10 @@ func (c *Conversation) NextMessage(round uint32) *convo.DeadDropMessage {
 
 	// Cover traffic message by default
 	msg := &ConvoMessage{
-		Seq:    0,
-		Ack:    c.ack,
-		Lowest: false,
-		Body:   nil,
+		Seq:      0,
+		Ack:      c.ack,
+		Lowest:   false,
+		UserText: make([]byte, SizeUserText),
 	}
 
 	if len(c.outQueue) > 0 {
@@ -224,7 +222,7 @@ func (c *Conversation) NextMessage(round uint32) *convo.DeadDropMessage {
 		}
 
 		msg.Seq = c.outQueue[c.lastOut].RelativeSeq + c.seqBase
-		msg.Body = c.outQueue[c.lastOut].Msg
+		msg.UserText = c.outQueue[c.lastOut].Msg
 	}
 	c.Unlock()
 
@@ -320,7 +318,7 @@ func (c *Conversation) Reply(round uint32, encmsg []byte) {
 	if msg.Seq > c.ack {
 		// This message is not cover traffic (msg.Seq != 0) and we have
 		// not processed it yet (msg.Seq > c.ack).  Queue the message.
-		c.inQueue[msg.Seq] = msg.Body
+		c.inQueue[msg.Seq] = msg.UserText
 
 		// If this is the lowest-numbered message the peer knows about,
 		// then don't bother waiting for any lower-numbered messages.
