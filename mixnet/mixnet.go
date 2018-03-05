@@ -985,7 +985,12 @@ func (c *Client) RunRoundBidirectional(ctx context.Context, server PublicServerC
 
 	// Delete the round asynchronously.
 	go func() {
-		_, err := conns[0].DeleteRound(context.Background(), &pb.DeleteRoundRequest{
+		conn, err := c.getConn(server)
+		if err != nil {
+			return
+		}
+
+		_, err = conn.DeleteRound(context.Background(), &pb.DeleteRoundRequest{
 			Service: service,
 			Round:   round,
 		})
