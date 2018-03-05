@@ -54,6 +54,10 @@ type AccessCount struct {
 	Doubles int64
 }
 
+func (s *ConvoService) Bidirectional() bool {
+	return true
+}
+
 func (s *ConvoService) SizeIncomingMessage() int {
 	return sizeDeadDropMessage
 }
@@ -62,8 +66,18 @@ func (s *ConvoService) SizeReplyMessage() int {
 	return SizeEncryptedMessageBody
 }
 
-func (s *ConvoService) GenerateNoise(round uint32, nextServerKeys []*[32]byte) [][]byte {
-	nonce := mixnet.ForwardNonce(round)
+func (s *ConvoService) ParseServiceData(data []byte) (interface{}, error) {
+	return nil, nil
+}
+
+func (s *ConvoService) GenerateNoise(settings mixnet.RoundSettings, myPos int) [][]byte {
+	if !(myPos < len(settings.OnionKeys)-1) {
+		// Last server doesn't generate noise.
+		return nil
+	}
+	nextServerKeys := settings.OnionKeys[myPos+1:]
+
+	nonce := mixnet.ForwardNonce(settings.Round)
 
 	numFakeSingles := s.Laplace.Uint32()
 	numFakeDoubles := s.Laplace.Uint32()
@@ -76,8 +90,8 @@ func (s *ConvoService) GenerateNoise(round uint32, nextServerKeys []*[32]byte) [
 	return noise
 }
 
-func (s *ConvoService) SortReplies(incoming [][]byte) (replies [][]byte) {
-	replies = make([][]byte, len(incoming))
+func (s *ConvoService) HandleMessages(settings mixnet.RoundSettings, incoming [][]byte) (interface{}, error) {
+	replies := make([][]byte, len(incoming))
 
 	var singles, doubles int64
 	var dest DeadDrop
@@ -125,5 +139,5 @@ func (s *ConvoService) SortReplies(incoming [][]byte) (replies [][]byte) {
 	default:
 	}
 
-	return
+	return replies, nil
 }

@@ -58,7 +58,7 @@ func coordinatorLoop(coordinatorKey ed25519.PrivateKey, mixchain *mock.Mixchain)
 		}
 
 		messages, onions, onionKeys := makeConvoOnions(settings)
-		replies, err := coordinatorClient.RunRound(context.Background(), mixchain.Servers[0], "Convo", round, onions)
+		replies, err := coordinatorClient.RunRoundBidirectional(context.Background(), mixchain.Servers[0], "Convo", round, onions)
 		if err != nil {
 			log.Fatalf("mixnet.RunRound: %s", err)
 		}
@@ -199,7 +199,7 @@ func TestMixnetPerformance(t *testing.T) {
 			}
 		}
 		start := time.Now()
-		replies, err := coordinatorClient.RunRound(context.Background(), mixchain.Servers[0], "Convo", round, onions)
+		replies, err := coordinatorClient.RunRoundBidirectional(context.Background(), mixchain.Servers[0], "Convo", round, onions)
 		if err != nil {
 			log.Fatalf("mixnet.RunRound: %s", err)
 		}

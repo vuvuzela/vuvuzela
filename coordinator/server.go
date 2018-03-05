@@ -408,7 +408,7 @@ func (srv *Server) mixOnions(ctx context.Context, firstServer mixnet.PublicServe
 	logger.Info("Start mixing")
 	start := time.Now()
 
-	replies, err := srv.mixnetClient.RunRound(ctx, firstServer, srv.Service, round, onions)
+	replies, err := srv.mixnetClient.RunRoundBidirectional(ctx, firstServer, srv.Service, round, onions)
 	if err != nil {
 		logger.WithFields(log.Fields{"call": "RunRound"}).Error(err)
 		srv.hub.Broadcast("error", RoundError{Round: round, Err: "server error"})

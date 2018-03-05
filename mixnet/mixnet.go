@@ -39,17 +39,23 @@ import (
 //go:generate easyjson mixnet.go
 
 type MixService interface {
+	// True for mixnets that send onions in both directions (e.g., Convo),
+	// and false for mixnets that send onions in one direction
+	// (e.g., AddFriend and Dialing).
+	Bidirectional() bool
+
 	SizeIncomingMessage() int
 	SizeReplyMessage() int
 
-	GenerateNoise(round uint32, nextServerKeys []*[32]byte) [][]byte
+	ParseServiceData(data []byte) (interface{}, error)
 
-	// SortReplies is called by the last server in the chain to sort incoming
-	// messages into replies sent back through the chain. Assumes:
-	//   len(replies) = len(incoming);
-	//   len(incoming[i]) = SizeIncomingMessage();
-	//   len(replies[i]) = SizeReplyMessage();
-	SortReplies(incoming [][]byte) (replies [][]byte)
+	GenerateNoise(settings RoundSettings, myPos int) [][]byte
+
+	// HandleMessages is called by the last server on the chain
+	// with the decrypted message batch. If Bidirectional() is true,
+	// the first return value of HandleMessages must be [][]byte,
+	// otherwise it must be a string that is used as the Close RPC result.
+	HandleMessages(settings RoundSettings, messages [][]byte) (interface{}, error)
 }
 
 type Server struct {
@@ -57,8 +63,6 @@ type Server struct {
 	CoordinatorKey ed25519.PublicKey
 
 	Services map[string]MixService
-
-	Laplace rand.Laplace
 
 	roundsMu sync.RWMutex
 	rounds   map[serviceRound]*roundState
@@ -75,6 +79,7 @@ type serviceRound struct {
 
 type roundState struct {
 	mu                sync.Mutex
+	settings          RoundSettings
 	settingsSignature []byte
 	numIncoming       uint32
 	incoming          [][]byte
@@ -85,10 +90,12 @@ type roundState struct {
 	decryptWg         sync.WaitGroup
 	encryptDone       chan struct{}
 	closed            bool
+	closeResult       string
 	err               error
 
 	chain             []PublicServerConfig
 	myPos             int
+	bidirectional     bool
 	incomingOnionSize int
 	onionPrivateKey   *[32]byte
 	onionPublicKey    *[32]byte
@@ -232,6 +239,7 @@ func (srv *Server) NewRound(ctx context.Context, req *pb.NewRoundRequest) (*pb.N
 		encryptDone: make(chan struct{}),
 
 		chain:             chain,
+		bidirectional:     service.Bidirectional(),
 		myPos:             myPos,
 		incomingOnionSize: (len(chain)-myPos)*onionbox.Overhead + service.SizeIncomingMessage(),
 		onionPublicKey:    public,
@@ -272,6 +280,12 @@ func (srv *Server) SetRoundSettings(ctx context.Context, req *pb.SetRoundSetting
 		return nil, err
 	}
 
+	serviceData, err := srv.Services[settings.Service].ParseServiceData(settings.RawServiceData)
+	if err != nil {
+		return nil, err
+	}
+	settings.ServiceData = serviceData
+
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
@@ -290,23 +304,20 @@ func (srv *Server) SetRoundSettings(ctx context.Context, req *pb.SetRoundSetting
 		return nil, errors.New("bad round settings: unexpected key at position %d", st.myPos)
 	}
 
+	st.settings = settings
 	sig := ed25519.Sign(srv.SigningKey, settings.SigningMessage())
 	st.settingsSignature = sig
 
-	if st.myPos < len(st.chain)-1 {
-		// Last server doesn't generate noise.
-		service, ok := srv.Services[settings.Service]
-		if !ok {
-			return nil, errors.New("unknown service: %q", settings.Service)
-		}
-		st.nextServerKeys = settings.OnionKeys[st.myPos+1:]
-		st.noiseDone = make(chan struct{})
-
-		go func() {
-			st.noise = service.GenerateNoise(settings.Round, st.nextServerKeys)
-			close(st.noiseDone)
-		}()
+	service, ok := srv.Services[settings.Service]
+	if !ok {
+		return nil, errors.New("unknown service: %q", settings.Service)
 	}
+
+	st.noiseDone = make(chan struct{})
+	go func() {
+		st.noise = service.GenerateNoise(settings, st.myPos)
+		close(st.noiseDone)
+	}()
 
 	return &pb.RoundSettingsSignature{
 		Signature: sig,
@@ -333,13 +344,19 @@ func decryptionWorker(in chan decryptionJob) {
 			}
 
 			copy(theirPublic[:], onion[0:32])
-			box.Precompute(&st.sharedKeys[offset+i], &theirPublic, st.onionPrivateKey)
-
-			// TODO we could avoid allocating here, but is it worth it?
-			msg, ok := box.OpenAfterPrecomputation(nil, onion[32:], nonce, &st.sharedKeys[offset+i])
+			var msg []byte
+			var ok bool
+			if st.bidirectional {
+				// Precompute and save the key for the reverse direction in bidirectional mode.
+				box.Precompute(&st.sharedKeys[offset+i], &theirPublic, st.onionPrivateKey)
+				// TODO we could avoid allocating here, but is it worth it?
+				msg, ok = box.OpenAfterPrecomputation(nil, onion[32:], nonce, &st.sharedKeys[offset+i])
+			} else {
+				msg, ok = box.Open(nil, onion[32:], nonce, &theirPublic, st.onionPrivateKey)
+			}
 			st.incoming[offset+i] = msg
 			if !ok {
-				log.WithFields(log.Fields{"rpc": "AddOnions", "round": job.round}).Error("Decrypting onion failed")
+				log.WithFields(log.Fields{"srv": st.myPos, "rpc": "AddOnions", "service": st.settings.Service, "round": job.round}).Errorf("Decrypting onion failed (%d bytes)", len(onion))
 			}
 		}
 
@@ -408,8 +425,10 @@ func (srv *Server) AddOnions(stream pb.Mixnet_AddOnionsServer) error {
 		st.acceptingOnions = true
 		st.numIncoming = md.numIncoming
 		st.incoming = make([][]byte, st.numIncoming)
-		// Allocate all the shared keys upfront.
-		st.sharedKeys = make([][32]byte, st.numIncoming)
+		if st.bidirectional {
+			// Allocate all the shared keys upfront.
+			st.sharedKeys = make([][32]byte, st.numIncoming)
+		}
 	} else if st.numIncoming != md.numIncoming {
 		st.mu.Unlock()
 		return errors.New("round %d: multiple values for numIncoming: got %d, want %d", round, md.numIncoming, st.numIncoming)
@@ -469,7 +488,7 @@ func (srv *Server) filterIncoming(st *roundState) {
 	st.incomingIndex = incomingIndex
 }
 
-func (srv *Server) CloseRound(ctx context.Context, req *pb.CloseRoundRequest) (*pb.Nothing, error) {
+func (srv *Server) CloseRound(ctx context.Context, req *pb.CloseRoundRequest) (*pb.CloseRoundResponse, error) {
 	st, err := srv.getRound(req.Service, req.Round)
 	if err != nil {
 		return nil, err
@@ -481,7 +500,9 @@ func (srv *Server) CloseRound(ctx context.Context, req *pb.CloseRoundRequest) (*
 	st.mu.Lock()
 	if st.closed {
 		st.mu.Unlock()
-		return &pb.Nothing{}, st.err
+		return &pb.CloseRoundResponse{
+			Result: st.closeResult,
+		}, st.err
 	}
 	// Don't allow new decryption jobs.
 	st.acceptingOnions = false
@@ -505,36 +526,77 @@ func (srv *Server) CloseRound(ctx context.Context, req *pb.CloseRoundRequest) (*
 
 	srv.filterIncoming(st)
 
-	var replies [][]byte
-	// if not last server
-	if st.myPos < len(st.chain)-1 {
-		<-st.noiseDone
-		numNonNoise := len(st.incoming)
-		outgoing := append(st.incoming, st.noise...)
-		st.noise = nil
-		st.incoming = nil
+	<-st.noiseDone
+	numNonNoise := len(st.incoming)
+	outgoing := st.incoming
+	if len(st.noise) > 0 {
+		outgoing = append(st.incoming, st.noise...)
+	}
+	st.noise = nil
+	st.incoming = nil
 
+	if st.myPos < len(st.chain)-1 {
+		// Shuffle messages if not last server.
 		shuffler := shuffle.New(rand.Reader, len(outgoing))
 		shuffler.Shuffle(outgoing)
 
-		replies, err = srv.mixClient.RunRound(ctx, st.chain[st.myPos+1], req.Service, req.Round, outgoing)
-		if err != nil {
-			return nil, errors.New("RunRound %d->%d: %s", st.myPos, st.myPos+1, err)
-		}
+		if st.bidirectional {
+			replies, err := srv.mixClient.RunRoundBidirectional(ctx, st.chain[st.myPos+1], req.Service, req.Round, outgoing)
+			if err != nil {
+				st.err = errors.New("RunRound %d->%d: %s", st.myPos, st.myPos+1, err)
+				return nil, st.err
+			}
 
-		shuffler.Unshuffle(replies)
-		// drop the noise
-		replies = replies[:numNonNoise]
+			shuffler.Unshuffle(replies)
+			// drop the noise
+			replies = replies[:numNonNoise]
+
+			srv.encryptReplies(st, req, replies)
+
+			return &pb.CloseRoundResponse{
+				Result: "",
+			}, nil
+		} else {
+			result, err := srv.mixClient.RunRoundUnidirectional(ctx, st.chain[st.myPos+1], req.Service, req.Round, outgoing)
+			if err != nil {
+				st.err = errors.New("RunRound %d->%d: %s", st.myPos, st.myPos+1, err)
+				return nil, st.err
+			}
+
+			st.closeResult = result
+			return &pb.CloseRoundResponse{
+				Result: result,
+			}, nil
+		}
 	} else {
+		// Last server doesn't shuffle, but HandleMessages may choose to do so.
 		start := time.Now()
-		replies = srv.Services[req.Service].SortReplies(st.incoming)
+		result, err := srv.Services[req.Service].HandleMessages(st.settings, outgoing)
 		duration := time.Now().Sub(start)
-		logger.WithFields(log.Fields{"duration": duration}).Infof("Sorted replies")
+		if err != nil {
+			st.err = err
+			return &pb.CloseRoundResponse{}, st.err
+		}
+		logger.WithFields(log.Fields{"duration": duration}).Infof("Handled messages")
 
 		st.incoming = nil
-	}
 
-	// Encrypt the replies.
+		if st.bidirectional {
+			replies := result.([][]byte)
+			srv.encryptReplies(st, req, replies)
+			return &pb.CloseRoundResponse{
+				Result: "",
+			}, nil
+		} else {
+			st.closeResult = result.(string)
+			return &pb.CloseRoundResponse{
+				Result: st.closeResult,
+			}, nil
+		}
+	}
+}
+
+func (srv *Server) encryptReplies(st *roundState, req *pb.CloseRoundRequest, replies [][]byte) {
 	st.replies = make([][]byte, len(st.incomingIndex))
 	go func() {
 		replyMsgSize := (len(st.chain)-st.myPos-1)*box.Overhead + srv.Services[req.Service].SizeReplyMessage()
@@ -561,14 +623,15 @@ func (srv *Server) CloseRound(ctx context.Context, req *pb.CloseRoundRequest) (*
 		})
 		close(st.encryptDone)
 	}()
-
-	return &pb.Nothing{}, nil
 }
 
 func (srv *Server) GetOnions(req *pb.GetOnionsRequest, stream pb.Mixnet_GetOnionsServer) error {
 	st, err := srv.getRound(req.Service, req.Round)
 	if err != nil {
 		return err
+	}
+	if !st.bidirectional {
+		return errors.New("getOnions can not be used for unidirectional service %q", req.Service)
 	}
 	if err := srv.authPrev(stream.Context(), st); err != nil {
 		return err
@@ -774,7 +837,15 @@ func streamAddOnions(ctx context.Context, conn pb.MixnetClient, offset int, onio
 	return err
 }
 
-func (c *Client) RunRound(ctx context.Context, server PublicServerConfig, service string, round uint32, onions [][]byte) ([][]byte, error) {
+func spanSize(numOnions int) int {
+	size := numOnions / 5
+	if size == 0 {
+		size = 1
+	}
+	return size
+}
+
+func (c *Client) addOnions(ctx context.Context, server PublicServerConfig, service string, round uint32, onions [][]byte) (*pb.CloseRoundResponse, error) {
 	md := metadata.Pairs(
 		"service", service,
 		"round", fmt.Sprintf("%d", round),
@@ -782,12 +853,12 @@ func (c *Client) RunRound(ctx context.Context, server PublicServerConfig, servic
 	)
 	addCtx := metadata.NewOutgoingContext(ctx, md)
 
-	numSpans := len(onions) / 5
-	if numSpans == 0 {
-		numSpans = 1
+	spans := concurrency.Spans(len(onions), spanSize(len(onions)))
+	numConns := len(spans)
+	if numConns < 1 {
+		numConns = 1
 	}
-	spans := concurrency.Spans(len(onions), numSpans)
-	conns, err := c.getConns(len(spans), server)
+	conns, err := c.getConns(numConns, server)
 	if err != nil {
 		return nil, err
 	}
@@ -821,17 +892,52 @@ func (c *Client) RunRound(ctx context.Context, server PublicServerConfig, servic
 		Service: service,
 		Round:   round,
 	}
-	_, closeErr := conns[0].CloseRound(ctx, closeReq)
-	if closeErr != nil {
-		return nil, closeErr
+	closeResp, err := conns[0].CloseRound(ctx, closeReq)
+	if err != nil {
+		return nil, err
 	}
 	duration = time.Now().Sub(start)
 	log.WithFields(log.Fields{"round": round, "duration": duration, "onions": len(onions)}).Infof("RunRound: closed round")
 
-	start = time.Now()
+	return closeResp, nil
+}
+
+func (c *Client) RunRoundUnidirectional(ctx context.Context, server PublicServerConfig, service string, round uint32, onions [][]byte) (string, error) {
+	resp, err := c.addOnions(ctx, server, service, round, onions)
+
+	// Delete the round asynchronously, even if addOnions fails.
+	go func() {
+		conn, err := c.getConn(server)
+		if err != nil {
+			return
+		}
+
+		_, err = conn.DeleteRound(context.Background(), &pb.DeleteRoundRequest{
+			Service: service,
+			Round:   round,
+		})
+		if err != nil {
+			log.WithFields(log.Fields{"round": round}).Errorf("RunRound: failed to delete round: %s", err)
+		}
+	}()
+
+	if err != nil {
+		return "", err
+	}
+
+	return resp.Result, err
+}
+
+func (c *Client) RunRoundBidirectional(ctx context.Context, server PublicServerConfig, service string, round uint32, onions [][]byte) ([][]byte, error) {
+	_, err := c.addOnions(ctx, server, service, round, onions)
+	if err != nil {
+		return nil, err
+	}
+
+	start := time.Now()
 	replies := make([][]byte, len(onions))
-	spans = concurrency.Spans(len(replies), numSpans)
-	conns, err = c.getConns(len(spans), server)
+	spans := concurrency.Spans(len(replies), spanSize(len(onions)))
+	conns, err := c.getConns(len(spans), server)
 	if err != nil {
 		return nil, err
 	}
@@ -857,6 +963,7 @@ func (c *Client) RunRound(ctx context.Context, server PublicServerConfig, servic
 		}
 		return nil
 	}
+	errs := make(chan error, 1)
 	for i, span := range spans {
 		conn := conns[i]
 		go func(span concurrency.Span) {
@@ -873,7 +980,7 @@ func (c *Client) RunRound(ctx context.Context, server PublicServerConfig, servic
 	if getErr != nil {
 		return nil, errors.Wrap(getErr, "fetching onions")
 	}
-	duration = time.Now().Sub(start)
+	duration := time.Now().Sub(start)
 	log.WithFields(log.Fields{"round": round, "duration": duration, "onions": len(onions)}).Infof("RunRound: fetched onions from mixer")
 
 	// Delete the round asynchronously.

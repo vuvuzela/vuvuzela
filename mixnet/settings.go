@@ -6,7 +6,7 @@ package mixnet
 
 import (
 	"bytes"
-	"encoding/binary"
+	"encoding/json"
 
 	"vuvuzela.io/alpenhorn/errors"
 	pb "vuvuzela.io/vuvuzela/mixnet/convopb"
@@ -21,16 +21,19 @@ type RoundSettings struct {
 
 	// OnionKeys are the encryption keys in mixnet order.
 	OnionKeys []*[32]byte
+
+	// RawServiceData is the extra data required by the mixnet service.
+	RawServiceData []byte
+
+	// ServiceData is the result of parsing the RawServiceData;
+	// it is not included in the signing message.
+	ServiceData interface{} `json:"-"`
 }
 
 func (s RoundSettings) SigningMessage() []byte {
 	buf := new(bytes.Buffer)
 	buf.WriteString("RoundSettings")
-	buf.WriteString(s.Service)
-	binary.Write(buf, binary.BigEndian, s.Round)
-	for _, key := range s.OnionKeys {
-		buf.Write(key[:])
-	}
+	json.NewEncoder(buf).Encode(s)
 	return buf.Bytes()
 }
 
@@ -46,14 +49,16 @@ func (s *RoundSettings) FromProto(pbs *pb.RoundSettings) error {
 		}
 		s.OnionKeys[i] = key
 	}
+	s.RawServiceData = pbs.ServiceData
 	return nil
 }
 
 func (s RoundSettings) Proto() *pb.RoundSettings {
 	pbs := &pb.RoundSettings{
-		Service:   s.Service,
-		Round:     s.Round,
-		OnionKeys: make([][]byte, len(s.OnionKeys)),
+		Service:     s.Service,
+		Round:       s.Round,
+		OnionKeys:   make([][]byte, len(s.OnionKeys)),
+		ServiceData: s.RawServiceData,
 	}
 	for i, key := range s.OnionKeys {
 		pbs.OnionKeys[i] = key[:]
