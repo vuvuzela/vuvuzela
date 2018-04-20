@@ -19,7 +19,7 @@ type ProductionOutput struct {
 
 func NewProductionOutput(logsDir string) (ProductionOutput, error) {
 	h := ProductionOutput{
-		stderrHandler: log.OutputText(log.Stderr),
+		stderrHandler: &log.OutputText{Out: log.Stderr},
 	}
 
 	if logsDir != "" {
