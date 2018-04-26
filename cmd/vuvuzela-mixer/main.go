@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	cryptoRand "crypto/rand"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -66,7 +67,7 @@ b = {{.Noise.B | printf "%0.1f"}}
 `
 
 func writeNewConfig() {
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	publicKey, privateKey, err := ed25519.GenerateKey(cryptoRand.Reader)
 	if err != nil {
 		panic(err)
 	}
