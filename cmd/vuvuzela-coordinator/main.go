@@ -5,8 +5,6 @@
 package main
 
 import (
-	"bytes"
-	"crypto/rand"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -15,15 +13,12 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
-	"text/template"
-	"time"
-
-	"golang.org/x/crypto/ed25519"
 
 	"vuvuzela.io/alpenhorn/config"
 	"vuvuzela.io/alpenhorn/edtls"
 	"vuvuzela.io/alpenhorn/encoding/toml"
 	"vuvuzela.io/alpenhorn/log"
+	"vuvuzela.io/vuvuzela/cmd/cmdconf"
 	"vuvuzela.io/vuvuzela/coordinator"
 	"vuvuzela.io/vuvuzela/internal/vzlog"
 )
@@ -31,31 +26,6 @@ import (
 var (
 	doInit = flag.Bool("init", false, "initialize a coordinator for the first time")
 )
-
-type Config struct {
-	PublicKey  ed25519.PublicKey
-	PrivateKey ed25519.PrivateKey
-
-	ListenAddr string
-	LogsDir    string
-
-	RoundDelay time.Duration
-}
-
-var funcMap = template.FuncMap{
-	"base32": toml.EncodeBytes,
-}
-
-const confTemplate = `# Vuvuzela coordinator (entry) server config
-
-publicKey  = {{.PublicKey | base32 | printf "%q"}}
-privateKey = {{.PrivateKey | base32 | printf "%q"}}
-
-listenAddr = {{.ListenAddr | printf "%q"}}
-logsDir = {{.LogsDir | printf "%q" }}
-
-roundDelay = {{.RoundDelay | printf "%q"}}
-`
 
 func initService(service string, confHome string) {
 	fmt.Printf("--> Initializing %q service.\n", service)
@@ -105,30 +75,8 @@ func initCoordinator() {
 }
 
 func writeNewConfig(path string) {
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		panic(err)
-	}
-
-	conf := &Config{
-		PublicKey:  publicKey,
-		PrivateKey: privateKey,
-
-		ListenAddr: "0.0.0.0:8000",
-		LogsDir:    vzlog.DefaultLogsDir("vuvuzela-coordinator", publicKey),
-
-		RoundDelay: 800 * time.Millisecond,
-	}
-
-	tmpl := template.Must(template.New("config").Funcs(funcMap).Parse(confTemplate))
-
-	buf := new(bytes.Buffer)
-	err = tmpl.Execute(buf, conf)
-	if err != nil {
-		log.Fatalf("template error: %s", err)
-	}
-
-	err = ioutil.WriteFile(path, buf.Bytes(), 0600)
+	data := cmdconf.NewCoordinatorConfig().TOML()
+	err := ioutil.WriteFile(path, data, 0600)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -154,7 +102,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	conf := new(Config)
+	conf := new(cmdconf.CoordinatorConfig)
 	err = toml.Unmarshal(data, conf)
 	if err != nil {
 		log.Fatalf("error parsing config %s: %s", confPath, err)

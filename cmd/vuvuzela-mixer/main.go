@@ -5,8 +5,6 @@
 package main
 
 import (
-	"bytes"
-	cryptoRand "crypto/rand"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -15,9 +13,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"runtime"
-	"text/template"
 
-	"golang.org/x/crypto/ed25519"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
@@ -25,7 +21,7 @@ import (
 	"vuvuzela.io/alpenhorn/edtls"
 	"vuvuzela.io/alpenhorn/encoding/toml"
 	"vuvuzela.io/alpenhorn/log"
-	"vuvuzela.io/crypto/rand"
+	"vuvuzela.io/vuvuzela/cmd/cmdconf"
 	"vuvuzela.io/vuvuzela/convo"
 	"vuvuzela.io/vuvuzela/internal/vzlog"
 	"vuvuzela.io/vuvuzela/mixnet"
@@ -37,66 +33,10 @@ var (
 	doinit   = flag.Bool("init", false, "create config file")
 )
 
-type Config struct {
-	PublicKey  ed25519.PublicKey
-	PrivateKey ed25519.PrivateKey
-
-	ListenAddr string
-	DebugAddr  string
-	LogsDir    string
-
-	Noise rand.Laplace
-}
-
-var funcMap = template.FuncMap{
-	"base32": toml.EncodeBytes,
-}
-
-const confTemplate = `# Vuvuzela mixnet server config
-
-publicKey  = {{.PublicKey | base32 | printf "%q"}}
-privateKey = {{.PrivateKey | base32 | printf "%q"}}
-
-listenAddr = {{.ListenAddr | printf "%q"}}
-debugAddr = {{.DebugAddr | printf "%q" }}
-logsDir = {{.LogsDir | printf "%q" }}
-
-[noise]
-mu = {{.Noise.Mu | printf "%0.1f"}}
-b = {{.Noise.B | printf "%0.1f"}}
-`
-
 func writeNewConfig() {
-	publicKey, privateKey, err := ed25519.GenerateKey(cryptoRand.Reader)
-	if err != nil {
-		panic(err)
-	}
-
-	conf := &Config{
-		PublicKey:  publicKey,
-		PrivateKey: privateKey,
-
-		ListenAddr: "0.0.0.0:2718",
-		DebugAddr:  "0.0.0.0:6060",
-		LogsDir:    vzlog.DefaultLogsDir("vuvuzela-mixer", publicKey),
-
-		Noise: rand.Laplace{
-			Mu: 100,
-			B:  3.0,
-		},
-	}
-
-	tmpl := template.Must(template.New("config").Funcs(funcMap).Parse(confTemplate))
-
-	buf := new(bytes.Buffer)
-	err = tmpl.Execute(buf, conf)
-	if err != nil {
-		log.Fatalf("template error: %s", err)
-	}
-	data := buf.Bytes()
-
 	path := "vuvuzela-mixer-init.conf"
-	err = ioutil.WriteFile(path, data, 0600)
+	data := cmdconf.NewMixerConfig().TOML()
+	err := ioutil.WriteFile(path, data, 0600)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -120,7 +60,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	conf := new(Config)
+	conf := new(cmdconf.MixerConfig)
 	err = toml.Unmarshal(data, conf)
 	if err != nil {
 		log.Fatalf("error parsing config %q: %s", *confPath, err)
