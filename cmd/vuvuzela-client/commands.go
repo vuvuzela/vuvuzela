@@ -26,7 +26,7 @@ type Command struct {
 	Handler func(gc *GuiClient, args []string) error
 }
 
-var commands = map[string]Command{
+var commands = map[string]*Command{
 	"help": {
 		Help: "/help prints this help message.",
 		Handler: func(gc *GuiClient, _ []string) error {
@@ -330,6 +330,31 @@ var commands = map[string]Command{
 		},
 	},
 
+
+	"cancelfriend": {
+	  Help: "/cancelfriend <username> cancle a sepcific friend request",
+	  Handler: func(gc *GuiClient, args []string) error {
+	    if len(args) == 0 {
+	      gc.Warnf("Missing username\n")
+	      return nil
+	    }
+	    username := args[0]
+	    reqs := gc.alpenhornClient.GetOutgoingFriendRequests()
+	    for _, req := range reqs {
+	      if req.Username == username {
+	        err := req.Cancel()
+	        if err != nil {
+	          gc.Warnf("%s for cancelling friend request %s\n", err, username);
+	          return nil
+	        }
+	      }
+	    }
+
+	    gc.Warnf("No queued friend request sent to %s\n", username)
+	    return nil
+	  },
+	},
+
 	"approve": {
 		Help: "/approve <username> approves a friend request.",
 		Handler: func(gc *GuiClient, args []string) error {
@@ -357,10 +382,18 @@ var commands = map[string]Command{
 }
 
 // avoid initialization loop
-var allCommands map[string]Command
+var allCommands map[string]*Command
 
 func init() {
 	allCommands = commands
+
+	// create aliases
+	allCommands["win"]  = allCommands["w"]
+	allCommands["talk"] = allCommands["call"]
+
+	// update alias help
+	allCommands["win"].Help  = "/win (<username>|<number>) creates or jumps to a window."
+	allCommands["talk"].Help = "/talk [<username>] calls a friend."
 }
 
 func (gc *GuiClient) printHelp() error {
