@@ -319,6 +319,20 @@ var commands = map[string]Command{
 			}
 
 			username := args[0]
+
+      // remove from friend requests
+      reqs := gc.alpenhornClient.GetOutgoingFriendRequests()
+      for _, req := range reqs {
+        if req.Username == username {
+          err := req.Cancel()
+          if err != nil {
+            gc.Warnf("%s for canceling friend request %s\n", err, username)
+            return nil
+          }
+        }
+      }
+
+      // remove from existing friends
 			u := gc.alpenhornClient.GetFriend(username)
 			if u == nil {
 				gc.Warnf("Cannot find friend %s\n", username)
@@ -328,31 +342,6 @@ var commands = map[string]Command{
 			}
 			return nil
 		},
-	},
-
-
-	"cancelfriend": {
-	  Help: "/cancelfriend <username> cancle a sepcific friend request",
-	  Handler: func(gc *GuiClient, args []string) error {
-	    if len(args) == 0 {
-	      gc.Warnf("Missing username\n")
-	      return nil
-	    }
-	    username := args[0]
-	    reqs := gc.alpenhornClient.GetOutgoingFriendRequests()
-	    for _, req := range reqs {
-	      if req.Username == username {
-	        err := req.Cancel()
-	        if err != nil {
-	          gc.Warnf("%s for cancelling friend request %s\n", err, username);
-	          return nil
-	        }
-	      }
-	    }
-
-	    gc.Warnf("No queued friend request sent to %s\n", username)
-	    return nil
-	  },
 	},
 
 	"approve": {
