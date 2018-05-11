@@ -320,19 +320,19 @@ var commands = map[string]Command{
 
 			username := args[0]
 
-      // remove from friend requests
-      reqs := gc.alpenhornClient.GetOutgoingFriendRequests()
-      for _, req := range reqs {
-        if req.Username == username {
-          err := req.Cancel()
-          if err != nil {
-            gc.Warnf("%s for canceling friend request %s\n", err, username)
-            return nil
-          }
-        }
-      }
+			// remove from friend requests
+			reqs := gc.alpenhornClient.GetOutgoingFriendRequests()
+			for _, req := range reqs {
+				if req.Username == username {
+					err := req.Cancel()
+					if err != nil {
+						gc.Warnf("%s for canceling friend request %s\n", err, username)
+						return nil
+					}
+				}
+			}
 
-      // remove from existing friends
+			// remove from existing friends
 			u := gc.alpenhornClient.GetFriend(username)
 			if u == nil {
 				gc.Warnf("Cannot find friend %s\n", username)
