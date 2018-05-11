@@ -26,7 +26,7 @@ type Command struct {
 	Handler func(gc *GuiClient, args []string) error
 }
 
-var commands = map[string]*Command{
+var commands = map[string]Command{
 	"help": {
 		Help: "/help prints this help message.",
 		Handler: func(gc *GuiClient, _ []string) error {
@@ -382,18 +382,10 @@ var commands = map[string]*Command{
 }
 
 // avoid initialization loop
-var allCommands map[string]*Command
+var allCommands map[string]Command
 
 func init() {
 	allCommands = commands
-
-	// create aliases
-	allCommands["win"]  = allCommands["w"]
-	allCommands["talk"] = allCommands["call"]
-
-	// update alias help
-	allCommands["win"].Help  = "/win (<username>|<number>) creates or jumps to a window."
-	allCommands["talk"].Help = "/talk [<username>] calls a friend."
 }
 
 func (gc *GuiClient) printHelp() error {
