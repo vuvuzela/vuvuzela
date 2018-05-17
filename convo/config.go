@@ -29,6 +29,10 @@ type ConvoConfig struct {
 	MixServers  []mixnet.PublicServerConfig
 }
 
+func (c *ConvoConfig) UseLatestVersion() {
+	c.Version = ConvoConfigVersion
+}
+
 //easyjson:readable
 type CoordinatorConfig struct {
 	Key     ed25519.PublicKey
