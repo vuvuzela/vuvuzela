@@ -150,6 +150,19 @@ func (gc *GuiClient) handleLine(line string) error {
 		}
 
 		handler, ok := commands[args[0]]
+		// search for alias
+		if !ok {
+			for _, c := range commands {
+				for _, alias := range c.Aliases {
+					if alias == args[0] {
+						ok = true
+						handler = c
+					}
+				}
+			}
+		}
+
+		// if alias not found
 		if !ok {
 			gc.Warnf("Unknown command: %s\n", args[0])
 			validCmds := make([]string, 0)
