@@ -14,7 +14,6 @@ import (
 
 	"vuvuzela.io/alpenhorn/encoding/toml"
 	"vuvuzela.io/crypto/rand"
-	"vuvuzela.io/vuvuzela/internal/vzlog"
 )
 
 var funcMap = template.FuncMap{
@@ -27,7 +26,6 @@ type MixerConfig struct {
 
 	ListenAddr string
 	DebugAddr  string
-	LogsDir    string
 
 	Noise rand.Laplace
 }
@@ -44,7 +42,6 @@ func NewMixerConfig() *MixerConfig {
 
 		ListenAddr: "0.0.0.0:2718",
 		DebugAddr:  "0.0.0.0:6060",
-		LogsDir:    vzlog.DefaultLogsDir("vuvuzela-mixer", publicKey),
 
 		Noise: rand.Laplace{
 			Mu: 100,
@@ -62,7 +59,6 @@ privateKey = {{.PrivateKey | base32 | printf "%q"}}
 
 listenAddr = {{.ListenAddr | printf "%q"}}
 debugAddr = {{.DebugAddr | printf "%q" }}
-logsDir = {{.LogsDir | printf "%q" }}
 
 [noise]
 mu = {{.Noise.Mu | printf "%0.1f"}}
@@ -85,7 +81,6 @@ type CoordinatorConfig struct {
 	PrivateKey ed25519.PrivateKey
 
 	ListenAddr string
-	LogsDir    string
 
 	RoundDelay time.Duration
 }
@@ -101,7 +96,6 @@ func NewCoordinatorConfig() *CoordinatorConfig {
 		PrivateKey: privateKey,
 
 		ListenAddr: "0.0.0.0:8000",
-		LogsDir:    vzlog.DefaultLogsDir("vuvuzela-coordinator", publicKey),
 
 		RoundDelay: 800 * time.Millisecond,
 	}
@@ -115,7 +109,6 @@ publicKey  = {{.PublicKey | base32 | printf "%q"}}
 privateKey = {{.PrivateKey | base32 | printf "%q"}}
 
 listenAddr = {{.ListenAddr | printf "%q"}}
-logsDir = {{.LogsDir | printf "%q" }}
 
 roundDelay = {{.RoundDelay | printf "%q"}}
 `

@@ -3,11 +3,6 @@ package vzlog
 import (
 	"fmt"
 	"os"
-	"os/user"
-	"path/filepath"
-
-	"github.com/davidlazar/go-crypto/encoding/base32"
-	"golang.org/x/crypto/ed25519"
 
 	"vuvuzela.io/alpenhorn/log"
 )
@@ -53,18 +48,4 @@ func (h ProductionOutput) Fire(e *log.Entry) {
 		}
 	}
 	h.stderrHandler.Fire(e)
-}
-
-// DefaultLogsDir returns a default location for log files.
-// serverType is a string like "alpenhorn-mixer".
-func DefaultLogsDir(serverType string, publicKey ed25519.PublicKey) string {
-	user, err := user.Current()
-	if err != nil {
-		panic(err)
-	}
-
-	publicKeyStr := base32.EncodeToString(publicKey)
-	logsDir := filepath.Join(user.HomeDir, ".vuvuzela", "logs", fmt.Sprintf("%s-%s", serverType, publicKeyStr[:10]))
-
-	return logsDir
 }

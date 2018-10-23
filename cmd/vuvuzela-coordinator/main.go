@@ -10,10 +10,10 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
-	"os/user"
 	"path/filepath"
 	"strings"
 
+	"vuvuzela.io/alpenhorn/cmd/cmdutil"
 	"vuvuzela.io/alpenhorn/config"
 	"vuvuzela.io/alpenhorn/edtls"
 	"vuvuzela.io/alpenhorn/encoding/toml"
@@ -24,14 +24,15 @@ import (
 )
 
 var (
-	doInit = flag.Bool("init", false, "initialize a coordinator for the first time")
+	doInit      = flag.Bool("init", false, "initialize a coordinator for the first time")
+	persistPath = flag.String("persist", "persist", "persistent data directory")
 )
 
-func initService(service string, confHome string) {
+func initService(service string) {
 	fmt.Printf("--> Initializing %q service.\n", service)
-	coordinatorPersistPath := filepath.Join(confHome, strings.ToLower(service)+"-coordinator-state")
+	servicePersistPath := filepath.Join(*persistPath, strings.ToLower(service)+"-coordinator-state")
 
-	doCoordinator := overwrite(coordinatorPersistPath)
+	doCoordinator := cmdutil.Overwrite(servicePersistPath)
 
 	if !doCoordinator {
 		fmt.Println("Nothing to do.")
@@ -40,64 +41,45 @@ func initService(service string, confHome string) {
 
 	server := &coordinator.Server{
 		Service:     service,
-		PersistPath: coordinatorPersistPath,
+		PersistPath: servicePersistPath,
 	}
 	err := server.Persist()
 	if err != nil {
 		log.Fatalf("failed to create coordinator server state for service %q: %s", service, err)
 	}
 
-	fmt.Printf("! Wrote coordinator server state: %s\n", coordinatorPersistPath)
+	fmt.Printf("! Wrote coordinator server state: %s\n", servicePersistPath)
 }
 
-func initCoordinator() {
-	u, err := user.Current()
-	if err != nil {
-		log.Fatal(err)
-	}
-	confHome := filepath.Join(u.HomeDir, ".vuvuzela")
-
-	err = os.Mkdir(confHome, 0700)
-	if err == nil {
-		fmt.Printf("Created directory %s\n", confHome)
-	} else if !os.IsExist(err) {
-		log.Fatal(err)
-	}
-
-	initService("Convo", confHome)
-
+func initCoordinator(confPath string) {
 	fmt.Printf("--> Generating coordinator key pair and config.\n")
-	confPath := filepath.Join(confHome, "coordinator.conf")
-	if overwrite(confPath) {
-		writeNewConfig(confPath)
+	if cmdutil.Overwrite(confPath) {
+		data := cmdconf.NewCoordinatorConfig().TOML()
+		err := ioutil.WriteFile(confPath, data, 0600)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("! Wrote new config file: %s\n", confPath)
 		fmt.Printf("--> Please edit the config file before running the server.\n")
 	}
-}
 
-func writeNewConfig(path string) {
-	data := cmdconf.NewCoordinatorConfig().TOML()
-	err := ioutil.WriteFile(path, data, 0600)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("! Wrote new config file: %s\n", path)
+	initService("Convo")
 }
 
 func main() {
 	flag.Parse()
 
-	if *doInit {
-		initCoordinator()
-		return
-	}
-
-	u, err := user.Current()
+	err := os.MkdirAll(*persistPath, 0700)
 	if err != nil {
 		log.Fatal(err)
 	}
-	confHome := filepath.Join(u.HomeDir, ".vuvuzela")
+	confPath := filepath.Join(*persistPath, "coordinator.conf")
 
-	confPath := filepath.Join(confHome, "coordinator.conf")
+	if *doInit {
+		initCoordinator(confPath)
+		return
+	}
+
 	data, err := ioutil.ReadFile(confPath)
 	if err != nil {
 		log.Fatal(err)
@@ -108,12 +90,13 @@ func main() {
 		log.Fatalf("error parsing config %s: %s", confPath, err)
 	}
 
-	logHandler, err := vzlog.NewProductionOutput(conf.LogsDir)
+	logsDir := filepath.Join(*persistPath, "logs")
+	logHandler, err := vzlog.NewProductionOutput(logsDir)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	coordinatorPresistPath := filepath.Join(confHome, "convo-coordinator-state")
+	convoPresistPath := filepath.Join(*persistPath, "convo-coordinator-state")
 	convoServer := &coordinator.Server{
 		Service:    "Convo",
 		PrivateKey: conf.PrivateKey,
@@ -122,7 +105,7 @@ func main() {
 
 		RoundDelay: conf.RoundDelay,
 
-		PersistPath: coordinatorPresistPath,
+		PersistPath: convoPresistPath,
 	}
 	err = convoServer.LoadPersistedState()
 	if err != nil {
@@ -148,28 +131,4 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-}
-
-func overwrite(path string) bool {
-	_, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		return true
-	}
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("%s already exists.\n", path)
-	fmt.Printf("Overwrite (y/N)? ")
-	var yesno [3]byte
-	n, err := os.Stdin.Read(yesno[:])
-	if err != nil {
-		log.Fatal(err)
-	}
-	if n == 0 {
-		return false
-	}
-	if yesno[0] != 'y' && yesno[0] != 'Y' {
-		return false
-	}
-	return true
 }

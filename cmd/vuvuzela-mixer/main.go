@@ -12,11 +12,13 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"os"
+	"path/filepath"
 	"runtime"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
+	"vuvuzela.io/alpenhorn/cmd/cmdutil"
 	"vuvuzela.io/alpenhorn/config"
 	"vuvuzela.io/alpenhorn/edtls"
 	"vuvuzela.io/alpenhorn/encoding/toml"
@@ -29,12 +31,11 @@ import (
 )
 
 var (
-	confPath = flag.String("conf", "", "config file")
-	doinit   = flag.Bool("init", false, "create config file")
+	doinit      = flag.Bool("init", false, "create config file")
+	persistPath = flag.String("persist", "persist_vzmix", "persistent data directory")
 )
 
-func writeNewConfig() {
-	path := "vuvuzela-mixer-init.conf"
+func writeNewConfig(path string) {
 	data := cmdconf.NewMixerConfig().TOML()
 	err := ioutil.WriteFile(path, data, 0600)
 	if err != nil {
@@ -46,27 +47,30 @@ func writeNewConfig() {
 func main() {
 	flag.Parse()
 
+	if err := os.MkdirAll(*persistPath, 0700); err != nil {
+		log.Fatal(err)
+	}
+	confPath := filepath.Join(*persistPath, "mixer.conf")
+
 	if *doinit {
-		writeNewConfig()
+		if cmdutil.Overwrite(confPath) {
+			writeNewConfig(confPath)
+		}
 		return
 	}
 
-	if *confPath == "" {
-		fmt.Println("specify config file with -conf")
-		os.Exit(1)
-	}
-
-	data, err := ioutil.ReadFile(*confPath)
+	data, err := ioutil.ReadFile(confPath)
 	if err != nil {
 		log.Fatal(err)
 	}
 	conf := new(cmdconf.MixerConfig)
 	err = toml.Unmarshal(data, conf)
 	if err != nil {
-		log.Fatalf("error parsing config %q: %s", *confPath, err)
+		log.Fatalf("error parsing config %q: %s", confPath, err)
 	}
 
-	logHandler, err := vzlog.NewProductionOutput(conf.LogsDir)
+	logsDir := filepath.Join(*persistPath, "logs")
+	logHandler, err := vzlog.NewProductionOutput(logsDir)
 	if err != nil {
 		log.Fatal(err)
 	}
