@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"time"
 
 	"golang.org/x/crypto/ed25519"
 
@@ -23,6 +24,7 @@ import (
 
 var username = flag.String("username", "", "Alpenhorn username")
 var debug = flag.Bool("debug", false, "Turn on debug mode")
+var latency = flag.Duration("latency", 150*time.Millisecond, "latency to coordinator")
 
 func main() {
 	flag.Parse()
@@ -43,6 +45,7 @@ func main() {
 
 	alpenhornClient, isNewAlpClient := LoadAlpenhornState(confHome, *username)
 	vuvuzelaClient, isNewVuvuzelaClient := LoadVuvuzelaState(confHome, *username)
+	vuvuzelaClient.CoordinatorLatency = *latency
 
 	gc := &GuiClient{
 		myName:          alpenhornClient.Username,

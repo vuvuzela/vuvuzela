@@ -24,7 +24,8 @@ import (
 )
 
 type Client struct {
-	PersistPath string
+	PersistPath        string
+	CoordinatorLatency time.Duration // Eventually we will measure this.
 
 	ConfigClient *config.Client
 	Handler      ConvoHandler
@@ -214,12 +215,12 @@ func (c *Client) runRound(conn typesocket.Conn, st *roundState, v coordinator.Ne
 		}
 	}
 
-	if time.Until(v.EndTime) < 180*time.Millisecond {
+	if time.Until(v.EndTime) < c.CoordinatorLatency {
 		c.Handler.DebugError(errors.New("runRound %d: skipping round (only %s left)", v.Round, time.Until(v.EndTime)))
 		return
 	}
 
-	time.Sleep(time.Until(v.EndTime) - 150*time.Millisecond)
+	time.Sleep(time.Until(v.EndTime) - c.CoordinatorLatency - 10*time.Millisecond)
 
 	outgoing := c.Handler.Outgoing(round)
 	onionKeys := make([][]*[32]byte, len(outgoing))
