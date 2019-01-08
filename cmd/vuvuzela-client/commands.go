@@ -191,7 +191,7 @@ var commands = map[string]Command{
 			username := args[0]
 			friend := gc.alpenhornClient.GetFriend(username)
 			if friend == nil {
-				gc.Warnf("%q is not in your friends list!\n")
+				gc.Warnf("%q is not in your friends list!\n", username)
 				return nil
 			}
 
