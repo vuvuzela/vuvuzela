@@ -78,6 +78,9 @@ var commands = map[string]Command{
 				if winNum < 0 {
 					return nil
 				}
+				if winNum == 0 {
+					return gc.focusMain()
+				}
 				return gc.focusConvoIndex(int(winNum) - 1)
 			}
 
