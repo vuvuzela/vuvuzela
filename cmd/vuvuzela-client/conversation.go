@@ -232,6 +232,7 @@ func (c *Conversation) NextMessage(round uint32) *convo.DeadDropMessage {
 	if roundKey == nil {
 		// We've rolled past this round so generate cover traffic.
 		dummy := new(convo.DeadDropMessage)
+		rand.Read(dummy.DeadDrop[:])
 		rand.Read(dummy.EncryptedMessage[:])
 		return dummy
 	}
