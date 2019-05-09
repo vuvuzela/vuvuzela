@@ -25,6 +25,7 @@ import (
 var username = flag.String("username", "", "Alpenhorn username")
 var debug = flag.Bool("debug", false, "Turn on debug mode")
 var latency = flag.Duration("latency", 150*time.Millisecond, "latency to coordinator")
+var home = flag.String("home", "", "The home directory in which Vuvuzela state is persisted")
 
 func main() {
 	flag.Parse()
@@ -34,11 +35,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	u, err := user.Current()
-	if err != nil {
-		log.Fatal(err)
+	if *home == "" {
+		u, err := user.Current()
+		if err != nil {
+			log.Fatal(err)
+		}
+		*home = u.HomeDir
 	}
-	confHome := filepath.Join(u.HomeDir, ".vuvuzela")
+	confHome := filepath.Join(*home, ".vuvuzela")
 	if err := os.MkdirAll(confHome, 0700); err != nil {
 		log.Fatal(err)
 	}
