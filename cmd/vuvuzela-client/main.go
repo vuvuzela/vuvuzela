@@ -26,6 +26,7 @@ var username = flag.String("username", "", "Alpenhorn username")
 var debug = flag.Bool("debug", false, "Turn on debug mode")
 var latency = flag.Duration("latency", 150*time.Millisecond, "latency to coordinator")
 var home = flag.String("home", "", "The home directory in which Vuvuzela state is persisted")
+var configServerURL = flag.String("url", "", "URL of config server")
 
 func main() {
 	flag.Parse()
@@ -47,8 +48,17 @@ func main() {
 		log.Fatal(err)
 	}
 
-	alpenhornClient, isNewAlpClient := LoadAlpenhornState(confHome, *username)
-	vuvuzelaClient, isNewVuvuzelaClient := LoadVuvuzelaState(confHome, *username)
+	var configClient *config.Client
+	if *configServerURL == "" {
+		configClient = config.StdClient
+	} else {
+		configClient = &config.Client{
+			ConfigServerURL: *configServerURL,
+		}
+	}
+
+	alpenhornClient, isNewAlpClient := LoadAlpenhornState(confHome, *username, configClient)
+	vuvuzelaClient, isNewVuvuzelaClient := LoadVuvuzelaState(confHome, *username, configClient)
 	vuvuzelaClient.CoordinatorLatency = *latency
 
 	gc := &GuiClient{
@@ -68,14 +78,14 @@ func main() {
 	})
 }
 
-func LoadAlpenhornState(confHome string, username string) (client *alpenhorn.Client, new bool) {
+func LoadAlpenhornState(confHome string, username string, configClient *config.Client) (client *alpenhorn.Client, new bool) {
 	alpStatePath := filepath.Join(confHome, fmt.Sprintf("%s-alpenhorn-client-state", username))
 	keywheelPath := filepath.Join(confHome, fmt.Sprintf("%s-keywheel", username))
 
 	var err error
 	client, err = alpenhorn.LoadClient(alpStatePath, keywheelPath)
 	if os.IsNotExist(err) {
-		client, err = generateAlpenhornClient(username, alpStatePath, keywheelPath)
+		client, err = generateAlpenhornClient(username, alpStatePath, keywheelPath, configClient)
 		if err != nil {
 			fmt.Printf("Failed to generate new Alpenhorn client: %s\n", err)
 			os.Exit(1)
@@ -87,17 +97,17 @@ func LoadAlpenhornState(confHome string, username string) (client *alpenhorn.Cli
 		os.Exit(1)
 	}
 
-	client.ConfigClient = config.StdClient
+	client.ConfigClient = configClient
 	return
 }
 
-func LoadVuvuzelaState(confHome string, username string) (client *vuvuzela.Client, new bool) {
+func LoadVuvuzelaState(confHome string, username string, configClient *config.Client) (client *vuvuzela.Client, new bool) {
 	vzStatePath := filepath.Join(confHome, fmt.Sprintf("%s-vuvuzela-client-state", username))
 
 	var err error
 	client, err = vuvuzela.LoadClient(vzStatePath)
 	if os.IsNotExist(err) {
-		client, err = generateVuvuzelaClient(vzStatePath)
+		client, err = generateVuvuzelaClient(vzStatePath, configClient)
 		if err != nil {
 			fmt.Printf("Failed to generate new Vuvuzela client: %s\n", err)
 			os.Exit(1)
@@ -109,16 +119,16 @@ func LoadVuvuzelaState(confHome string, username string) (client *vuvuzela.Clien
 		os.Exit(1)
 	}
 
-	client.ConfigClient = config.StdClient
+	client.ConfigClient = configClient
 	return
 }
 
-func generateAlpenhornClient(username string, alpStatePath string, keywheelPath string) (*alpenhorn.Client, error) {
-	addFriendConfig, err := config.StdClient.CurrentConfig("AddFriend")
+func generateAlpenhornClient(username string, alpStatePath string, keywheelPath string, configClient *config.Client) (*alpenhorn.Client, error) {
+	addFriendConfig, err := configClient.CurrentConfig("AddFriend")
 	if err != nil {
 		return nil, errors.Wrap(err, "fetching latest addfriend config")
 	}
-	dialingConfig, err := config.StdClient.CurrentConfig("Dialing")
+	dialingConfig, err := configClient.CurrentConfig("Dialing")
 	if err != nil {
 		return nil, errors.Wrap(err, "fetching latest dialing config")
 	}
@@ -153,8 +163,8 @@ func generateAlpenhornClient(username string, alpStatePath string, keywheelPath 
 	return client, nil
 }
 
-func generateVuvuzelaClient(clientPath string) (*vuvuzela.Client, error) {
-	convoConfig, err := config.StdClient.CurrentConfig("Convo")
+func generateVuvuzelaClient(clientPath string, configClient *config.Client) (*vuvuzela.Client, error) {
+	convoConfig, err := configClient.CurrentConfig("Convo")
 	if err != nil {
 		return nil, errors.Wrap(err, "fetching latest convo config")
 	}
