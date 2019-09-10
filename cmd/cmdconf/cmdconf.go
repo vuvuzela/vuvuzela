@@ -6,11 +6,10 @@ package cmdconf
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	cryptoRand "crypto/rand"
 	"text/template"
 	"time"
-
-	"golang.org/x/crypto/ed25519"
 
 	"vuvuzela.io/alpenhorn/encoding/toml"
 	"vuvuzela.io/crypto/rand"

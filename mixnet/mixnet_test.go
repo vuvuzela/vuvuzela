@@ -7,6 +7,7 @@ package mixnet_test
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"flag"
 	"os"
@@ -14,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/crypto/ed25519"
 	"golang.org/x/crypto/nacl/box"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

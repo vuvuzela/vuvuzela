@@ -5,9 +5,9 @@
 package mock
 
 import (
+	"crypto/ed25519"
 	"net"
 
-	"golang.org/x/crypto/ed25519"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 

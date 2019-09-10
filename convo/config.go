@@ -5,9 +5,8 @@
 package convo
 
 import (
+	"crypto/ed25519"
 	"encoding/json"
-
-	"golang.org/x/crypto/ed25519"
 
 	"vuvuzela.io/alpenhorn/config"
 	"vuvuzela.io/alpenhorn/errors"

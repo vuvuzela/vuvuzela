@@ -5,6 +5,7 @@
 package main
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
 	"flag"
 	"fmt"
@@ -12,8 +13,6 @@ import (
 	"os/user"
 	"path/filepath"
 	"time"
-
-	"golang.org/x/crypto/ed25519"
 
 	"vuvuzela.io/alpenhorn"
 	"vuvuzela.io/alpenhorn/config"

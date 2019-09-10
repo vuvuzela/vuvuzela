@@ -5,13 +5,13 @@
 package vuvuzela
 
 import (
+	"crypto/ed25519"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/davidlazar/go-crypto/encoding/base32"
-	"golang.org/x/crypto/ed25519"
 	"golang.org/x/crypto/nacl/box"
 
 	"vuvuzela.io/alpenhorn/config"

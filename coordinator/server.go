@@ -7,6 +7,7 @@ package coordinator
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,7 +16,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"golang.org/x/crypto/ed25519"
 	"golang.org/x/net/context"
 
 	"vuvuzela.io/alpenhorn/config"

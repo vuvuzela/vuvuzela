@@ -6,6 +6,7 @@ package mixnet
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	cryptoRand "crypto/rand"
 	"encoding/binary"
 	"fmt"
@@ -15,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/crypto/ed25519"
 	"golang.org/x/crypto/nacl/box"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
