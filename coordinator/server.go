@@ -19,7 +19,6 @@ import (
 	"golang.org/x/net/context"
 
 	"vuvuzela.io/alpenhorn/config"
-	"vuvuzela.io/alpenhorn/edtls"
 	"vuvuzela.io/alpenhorn/errors"
 	"vuvuzela.io/alpenhorn/log"
 	"vuvuzela.io/alpenhorn/typesocket"
@@ -153,8 +152,8 @@ func (srv *Server) sendAnnouncementHandler(w http.ResponseWriter, req *http.Requ
 		http.Error(w, "no peer certificate", http.StatusBadRequest)
 		return
 	}
-	key := edtls.GetSigningKey(req.TLS.PeerCertificates[0])
-	if len(key) != ed25519.PublicKeySize {
+	peerKey, ok := req.TLS.PeerCertificates[0].PublicKey.(ed25519.PublicKey)
+	if !ok {
 		http.Error(w, "invalid peer key", http.StatusBadRequest)
 		return
 	}
@@ -169,7 +168,7 @@ func (srv *Server) sendAnnouncementHandler(w http.ResponseWriter, req *http.Requ
 
 	gx := -1
 	for i, g := range conf.Guardians {
-		if bytes.Equal(g.Key, key) {
+		if bytes.Equal(g.Key, peerKey) {
 			gx = i
 			break
 		}

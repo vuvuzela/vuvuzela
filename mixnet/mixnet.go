@@ -157,9 +157,12 @@ func (srv *Server) auth(ctx context.Context, expectedKey ed25519.PublicKey) erro
 
 	certs := tlsInfo.State.PeerCertificates
 	if len(certs) != 1 {
-		status.Errorf(codes.Unauthenticated, "expecting 1 peer certificate, got %d", len(certs))
+		return status.Errorf(codes.Unauthenticated, "expecting 1 peer certificate, got %d", len(certs))
 	}
-	peerKey := edtls.GetSigningKey(certs[0])
+	peerKey, ok := certs[0].PublicKey.(ed25519.PublicKey)
+	if !ok {
+		return status.Errorf(codes.Unauthenticated, "expected ed25519 certificate")
+	}
 
 	if !bytes.Equal(expectedKey, peerKey) {
 		return status.Errorf(codes.Unauthenticated, "wrong edtls key")
