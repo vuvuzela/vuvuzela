@@ -129,7 +129,7 @@ func (c *Conversation) formatUserMessage(fromMe bool, msg string) string {
 	if n := len(c.peerUsername); n > max {
 		max = n
 	}
-	max += 1
+	max++
 
 	username := c.peerUsername
 	var usernameColor []ansi.Code
@@ -307,7 +307,7 @@ func (c *Conversation) Reply(round uint32, encmsg []byte) {
 		if c.seqBase > 0 && out.RelativeSeq+c.seqBase <= msg.Ack {
 			// We removed something from the queue, adjust lastOut.
 			if c.lastOut > 0 {
-				c.lastOut -= 1
+				c.lastOut--
 			}
 			continue
 		}
