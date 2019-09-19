@@ -22,13 +22,15 @@ import (
 )
 
 type Command struct {
-	Help    string
+	Help	string
+	Aliases []string
 	Handler func(gc *GuiClient, args []string) error
 }
 
 var commands = map[string]Command{
 	"help": {
 		Help: "/help prints this help message.",
+		Aliases: []string{},
 		Handler: func(gc *GuiClient, _ []string) error {
 			return gc.printHelp()
 		},
@@ -36,6 +38,7 @@ var commands = map[string]Command{
 
 	"quit": {
 		Help: "/quit quits vuvuzela.",
+		Aliases: []string{},
 		Handler: func(_ *GuiClient, _ []string) error {
 			return gocui.ErrQuit
 		},
@@ -43,6 +46,7 @@ var commands = map[string]Command{
 
 	"connect": {
 		Help: "/connect connects to the Vuvuzela servers.",
+		Aliases: []string{},
 		Handler: func(gc *GuiClient, args []string) error {
 			// Connect needs to be called in a different goroutine since it
 			// the calls PrintfSync functions.
@@ -53,6 +57,7 @@ var commands = map[string]Command{
 
 	"register": {
 		Help: "/register <token> registers your username with the Alpenhorn servers.",
+		Aliases: []string{},
 		Handler: func(gc *GuiClient, args []string) error {
 			if len(args) == 0 {
 				gc.Warnf("Usage: /register <token>\nSee https://vuvuzela.io to get started.\n")
@@ -67,6 +72,9 @@ var commands = map[string]Command{
 
 	"w": {
 		Help: "/w (<username>|<number>) creates or jumps to a window.",
+		Aliases: []string{
+		"win",
+		},
 		Handler: func(gc *GuiClient, args []string) error {
 			if len(args) == 0 {
 				gc.Warnf("Missing username or window number\n")
@@ -92,6 +100,7 @@ var commands = map[string]Command{
 
 	"wc": {
 		Help: "/wc closes the current window.",
+		Aliases: []string{},
 		Handler: func(gc *GuiClient, args []string) error {
 			gc.mu.Lock()
 			convo := gc.selectedConvo
@@ -123,6 +132,7 @@ var commands = map[string]Command{
 
 	"list": {
 		Help: "/list prints your friends list and friend requests.",
+		Aliases: []string{},
 		Handler: func(gc *GuiClient, _ []string) error {
 			buf := new(bytes.Buffer)
 
@@ -186,6 +196,7 @@ var commands = map[string]Command{
 
 	"debugfriend": {
 		Help: "/debugfriend <username> prints a friend's keywheel state.",
+		Aliases: []string{},
 		Handler: func(gc *GuiClient, args []string) error {
 			if len(args) == 0 {
 				gc.Warnf("Missing username\n")
@@ -211,6 +222,9 @@ var commands = map[string]Command{
 
 	"call": {
 		Help: "/call [<username>] calls a friend.",
+		Aliases: []string{
+		"talk",
+		},
 		Handler: func(gc *GuiClient, args []string) error {
 			gc.mu.Lock()
 			convo := gc.selectedConvo
@@ -247,6 +261,7 @@ var commands = map[string]Command{
 
 	"hangup": {
 		Help: "/hangup hangs up the current conversation.",
+		Aliases: []string{},
 		Handler: func(gc *GuiClient, args []string) error {
 			gc.mu.Lock()
 			convo := gc.selectedConvo
@@ -268,6 +283,7 @@ var commands = map[string]Command{
 
 	"answer": {
 		Help: "/answer answers a held call.",
+		Aliases: []string{},
 		Handler: func(gc *GuiClient, args []string) error {
 			gc.mu.Lock()
 			convo := gc.selectedConvo
@@ -296,6 +312,7 @@ var commands = map[string]Command{
 
 	"addfriend": {
 		Help: "/addfriend <username> sends a friend request to a friend.",
+		Aliases: []string{},
 		Handler: func(gc *GuiClient, args []string) error {
 			if len(args) == 0 {
 				gc.Warnf("Missing username\n")
@@ -315,6 +332,7 @@ var commands = map[string]Command{
 
 	"delfriend": {
 		Help: "/delfriend <username> removes a friend from your friends list.",
+		Aliases: []string{},
 		Handler: func(gc *GuiClient, args []string) error {
 			if len(args) == 0 {
 				gc.Warnf("Missing username\n")
@@ -322,6 +340,20 @@ var commands = map[string]Command{
 			}
 
 			username := args[0]
+
+			// remove from friend requests
+			reqs := gc.alpenhornClient.GetOutgoingFriendRequests()
+			for _, req := range reqs {
+				if req.Username == username {
+					err := req.Cancel()
+					if err != nil {
+						gc.Warnf("%s for canceling friend request %s\n", err, username)
+						return nil
+					}
+				}
+			}
+
+			// remove from existing friends
 			u := gc.alpenhornClient.GetFriend(username)
 			if u == nil {
 				gc.Warnf("Cannot find friend %s\n", username)
@@ -335,6 +367,7 @@ var commands = map[string]Command{
 
 	"approve": {
 		Help: "/approve <username> approves a friend request.",
+		Aliases: []string{},
 		Handler: func(gc *GuiClient, args []string) error {
 			if len(args) == 0 {
 				gc.Warnf("Missing username\n")
@@ -356,7 +389,7 @@ var commands = map[string]Command{
 			gc.Warnf("No friend request from %s\n", username)
 			return nil
 		},
-	},
+		},
 }
 
 // avoid initialization loop
@@ -375,6 +408,10 @@ func (gc *GuiClient) printHelp() error {
 	gc.Printf("%s\nCommands:\n", ansi.Colorf("Vuvuzela Help", ansi.Bold))
 	for _, cmd := range validCmds {
 		gc.Printf("  %s\n", allCommands[cmd].Help)
+
+		for alias := range allCommands[cmd].Aliases {
+			gc.Printf("  /%s is an alias for /%s\n", alias, cmd)
+		}
 	}
 	gc.Printf("To jump between windows use the /w command, Alt-[1..9], or Esc+[1..9].\n")
 	gc.Printf("Scroll up and down with PageUp and PageDown.\n")
@@ -396,14 +433,15 @@ func (gc *GuiClient) tabComplete(_ *gocui.Gui, v *gocui.View) error {
 
 	var uniqChoices []string
 	if len(args) == 1 {
-		for cmd, _ := range commands {
+		for cmd, c := range commands {
 			uniqChoices = append(uniqChoices, cmd)
+			uniqChoices = append(uniqChoices, c.Aliases...)
 		}
 	} else {
 		cmd := args[0]
 		var choices []string
 		switch cmd {
-		case "w":
+		case "w", "win":
 			gc.mu.Lock()
 			for _, convo := range gc.conversations {
 				choices = append(choices, convo.peerUsername)
@@ -411,7 +449,7 @@ func (gc *GuiClient) tabComplete(_ *gocui.Gui, v *gocui.View) error {
 			gc.mu.Unlock()
 		}
 		switch cmd {
-		case "call", "delfriend", "debugfriend", "addfriend", "w":
+		case "call", "talk", "delfriend", "debugfriend", "addfriend", "w", "win":
 			for _, friend := range gc.alpenhornClient.GetFriends() {
 				choices = append(choices, friend.Username)
 			}
